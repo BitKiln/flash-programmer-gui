@@ -2,8 +2,12 @@ import { ConnectionPanel } from "./components/ConnectionPanel";
 import { FirmwarePanel } from "./components/FirmwarePanel";
 import { FlashControls } from "./components/FlashControls";
 import { ConsoleOutput } from "./components/ConsoleOutput";
+import { MemoryViewer } from "./components/MemoryViewer";
+import { useState } from "react";
 
 export function App() {
+  const [tab, setTab] = useState<"firmware" | "memory">("firmware");
+
   return (
     <div className="h-screen w-screen flex flex-col overflow-hidden">
       {/* Header */}
@@ -26,9 +30,24 @@ export function App() {
 
         {/* Center Content */}
         <main className="flex-1 flex flex-col overflow-hidden">
-          {/* Top — Firmware Panel */}
+          {/* Top — Firmware inspector or memory viewer */}
+          <div className="flex gap-1 px-4 pt-3 shrink-0">
+            {(["firmware", "memory"] as const).map((name) => (
+              <button
+                key={name}
+                onClick={() => setTab(name)}
+                className={`px-3 py-1 text-xs font-semibold rounded-t transition-colors ${
+                  tab === name
+                    ? "bg-bg-secondary text-gray-100"
+                    : "text-gray-500 hover:text-gray-300"
+                }`}
+              >
+                {name === "firmware" ? "Firmware" : "Memory"}
+              </button>
+            ))}
+          </div>
           <div className="flex-1 overflow-y-auto">
-            <FirmwarePanel />
+            {tab === "firmware" ? <FirmwarePanel /> : <MemoryViewer />}
           </div>
 
           {/* Bottom — Flash Controls */}

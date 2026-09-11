@@ -9,13 +9,13 @@ use flash_core::{ClosureProgressCallback, FlashError, FlashEvent, FlashManager, 
 
 /// Helper to load the test bootloader-app gap hex file.
 fn load_gap_hex() -> FirmwareImage {
-    let hex_content = include_str!("../../../tests/test_data/valid_stm32_bootloader_app_gap.hex");
+    let hex_content = include_str!("../../../tests/fixtures/valid_stm32_bootloader_app_gap.hex");
     parse_hex(hex_content).expect("Parsing valid_stm32_bootloader_app_gap.hex must succeed")
 }
 
 /// Helper to load the single-segment test hex file.
 fn load_single_segment_hex() -> FirmwareImage {
-    let hex_content = include_str!("../../../tests/test_data/valid_stm32_single_segment.hex");
+    let hex_content = include_str!("../../../tests/fixtures/valid_stm32_single_segment.hex");
     parse_hex(hex_content).expect("Parsing valid_stm32_single_segment.hex must succeed")
 }
 

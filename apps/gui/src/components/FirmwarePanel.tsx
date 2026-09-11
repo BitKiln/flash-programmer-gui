@@ -1,4 +1,4 @@
-import { useCallback, useState, DragEvent } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useAppContext } from "../state/AppContext";
 import { useFlashProgrammer } from "../hooks/useFlashProgrammer";
 
@@ -6,21 +6,49 @@ export function FirmwarePanel() {
   const { state, dispatch } = useAppContext();
   const { loadFirmware } = useFlashProgrammer();
   const [isDragOver, setIsDragOver] = useState(false);
+  const loadFirmwareRef = useRef(loadFirmware);
+  loadFirmwareRef.current = loadFirmware;
 
-  const handleDrop = useCallback(
-    async (e: DragEvent<HTMLDivElement>) => {
-      e.preventDefault();
-      setIsDragOver(false);
-      const files = e.dataTransfer.files;
-      if (files.length > 0) {
-        const path = (files[0] as File & { path?: string }).path;
-        if (path) {
-          await loadFirmware(path);
+  // A file dropped onto a webview exposes no filesystem path (`File.path` is
+  // undefined under Tauri v2), so the drop has to come from Tauri's own
+  // drag-drop event, which carries real paths. The HTML5 handlers below only
+  // suppress the webview's default "open the file" behaviour.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const { getCurrentWebview } = await import("@tauri-apps/api/webview");
+        const stop = await getCurrentWebview().onDragDropEvent((event) => {
+          if (event.payload.type === "over") {
+            setIsDragOver(true);
+          } else if (event.payload.type === "drop") {
+            setIsDragOver(false);
+            const [path] = event.payload.paths;
+            if (path) {
+              void loadFirmwareRef.current(path);
+            }
+          } else {
+            setIsDragOver(false);
+          }
+        });
+        if (cancelled) {
+          stop();
+        } else {
+          unlisten = stop;
         }
+      } catch {
+        // Not running inside a Tauri webview (browser preview or tests):
+        // the browse button remains the way to load firmware.
       }
-    },
-    [loadFirmware]
-  );
+    })();
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
 
   const handleBrowse = useCallback(async () => {
     try {
@@ -76,12 +104,8 @@ export function FirmwarePanel() {
             ? "border-accent-red bg-accent-red/10"
             : "border-gray-600 hover:border-gray-500"
         }`}
-        onDragOver={(e) => {
-          e.preventDefault();
-          setIsDragOver(true);
-        }}
-        onDragLeave={() => setIsDragOver(false)}
-        onDrop={handleDrop}
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => e.preventDefault()}
         onClick={handleBrowse}
       >
         <div className="text-3xl mb-2">📄</div>
@@ -137,7 +161,7 @@ export function FirmwarePanel() {
                 </span>
               </p>
               {state.firmware.entry_point !== null && (
-                <p>
+                <p title={`Source: ${state.firmware.entry_point_source}`}>
                   Entry:{" "}
                   <span className="text-gray-100">
                     {formatAddress(state.firmware.entry_point)}
@@ -152,6 +176,48 @@ export function FirmwarePanel() {
               </p>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Segment Inspector */}
+      {state.firmware && state.firmware.segments.length > 0 && (
+        <div className="bg-bg-primary rounded-lg border border-gray-700">
+          <h3 className="text-xs text-gray-400 uppercase tracking-wider px-3 pt-3 pb-2">
+            Segments
+          </h3>
+          <div className="max-h-48 overflow-auto">
+            <table className="w-full text-xs font-mono">
+              <thead className="sticky top-0 bg-bg-primary text-gray-500">
+                <tr className="text-left">
+                  <th className="px-3 py-1 font-normal">#</th>
+                  <th className="px-3 py-1 font-normal">Start</th>
+                  <th className="px-3 py-1 font-normal">End</th>
+                  <th className="px-3 py-1 font-normal text-right">Size</th>
+                  <th className="px-3 py-1 font-normal text-right">CRC32</th>
+                </tr>
+              </thead>
+              <tbody className="text-gray-300">
+                {state.firmware.segments.map((segment) => (
+                  <tr key={segment.index} className="border-t border-gray-800">
+                    <td className="px-3 py-1 text-gray-500">{segment.index}</td>
+                    <td className="px-3 py-1">{formatAddress(segment.start_address)}</td>
+                    <td className="px-3 py-1">{formatAddress(segment.end_address)}</td>
+                    <td className="px-3 py-1 text-right">{formatSize(segment.size_bytes)}</td>
+                    <td className="px-3 py-1 text-right text-gray-400">{segment.crc32}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {state.firmware.gaps.length > 0 && (
+            <p className="px-3 py-2 text-xs text-gray-500 border-t border-gray-800">
+              {state.firmware.gaps.length} gap(s),{" "}
+              {formatSize(
+                state.firmware.gaps.reduce((total, gap) => total + gap.size, 0)
+              )}{" "}
+              unwritten between segments
+            </p>
+          )}
         </div>
       )}
 

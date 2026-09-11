@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useCallback, useRef, useEffect } from "react";
 import { useAppContext } from "../state/AppContext";
 import type {
@@ -8,92 +9,114 @@ import type {
   FlashResult,
   VerifyResult,
   FlashEventDto,
+  Profile,
+  ProfileSummary,
+  MemoryRead,
 } from "../types";
 
 /**
- * Custom hook wrapping all Tauri IPC invoke calls and event polling.
+ * Custom hook wrapping all Tauri IPC invoke calls and flash telemetry.
  *
- * Provides imperative functions for probe discovery, connection,
- * firmware loading, flashing, erasing, verification, and reset.
- * Automatically polls for flash events during active operations.
+ * Provides imperative functions for probe discovery, connection, firmware
+ * loading, flashing, erasing, verification, reset, and cancellation. Telemetry
+ * arrives as `flash:progress` / `flash:status` / `flash:log` events pushed by
+ * the backend; `get_flash_events` remains as a drain for anything buffered
+ * before the subscription was established.
  */
 export function useFlashProgrammer() {
   const { state, dispatch, addLog } = useAppContext();
-  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // ── Event Polling ────────────────────────────────────────────────────────
+  // ── Flash telemetry ──────────────────────────────────────────────────────
 
-  const processEvents = useCallback(
-    async () => {
-      try {
-        const events = await invoke<FlashEventDto[]>("get_flash_events");
-        for (const event of events) {
-          switch (event.type) {
-            case "StageStarted":
-              addLog("info", `[${event.stage}] ${event.message}`);
-              break;
-            case "Progress":
-              dispatch({
-                type: "SET_PROGRESS",
-                progress: {
-                  stage: event.stage,
-                  bytesTransferred: event.bytes_transferred,
-                  totalBytes: event.total_bytes,
-                  percentage: event.percentage,
-                  speedBps: event.speed_bps,
-                  elapsedMs: event.elapsed_ms,
-                  currentAddress: event.current_address,
-                  message: event.message,
-                },
-              });
-              break;
-            case "StageCompleted":
-              addLog(
-                "success",
-                `[${event.stage}] Completed in ${event.duration_ms}ms`
-              );
-              break;
-            case "Log":
-              addLog(
-                event.level === "warn"
-                  ? "warn"
-                  : event.level === "error"
-                    ? "error"
-                    : "info",
-                event.message
-              );
-              break;
-            case "Warning":
-              addLog("warn", event.message);
-              break;
-            case "Error":
-              addLog("error", `[${event.stage}] ${event.message}`);
-              break;
-          }
-        }
-      } catch {
-        // Silently handle polling errors
+  const handleEvent = useCallback(
+    (event: FlashEventDto) => {
+      switch (event.type) {
+        case "StageStarted":
+          addLog("info", `[${event.stage}] ${event.message}`);
+          break;
+        case "Progress":
+          dispatch({
+            type: "SET_PROGRESS",
+            progress: {
+              stage: event.stage,
+              bytesTransferred: event.bytes_transferred,
+              totalBytes: event.total_bytes,
+              percentage: event.percentage,
+              speedBps: event.speed_bps,
+              elapsedMs: event.elapsed_ms,
+              currentAddress: event.current_address,
+              message: event.message,
+            },
+          });
+          break;
+        case "StageCompleted":
+          addLog("success", `[${event.stage}] Completed in ${event.duration_ms}ms`);
+          break;
+        case "Log":
+          addLog(
+            event.level === "warn"
+              ? "warn"
+              : event.level === "error"
+                ? "error"
+                : "info",
+            event.message
+          );
+          break;
+        case "Warning":
+          addLog("warn", event.message);
+          break;
+        case "Error":
+          addLog("error", `[${event.stage}] ${event.message}`);
+          break;
       }
     },
     [dispatch, addLog]
   );
 
-  const startPolling = useCallback(() => {
-    if (pollingRef.current) return;
-    pollingRef.current = setInterval(processEvents, 200);
-  }, [processEvents]);
+  const handleEventRef = useRef(handleEvent);
+  handleEventRef.current = handleEvent;
 
-  const stopPolling = useCallback(() => {
-    if (pollingRef.current) {
-      clearInterval(pollingRef.current);
-      pollingRef.current = null;
-    }
+  // Subscribe once for the lifetime of the hook: telemetry is pushed, so the
+  // frontend no longer polls on a timer while an operation runs.
+  useEffect(() => {
+    let cancelled = false;
+    const unlisteners: UnlistenFn[] = [];
+
+    (async () => {
+      for (const channel of ["flash:progress", "flash:status", "flash:log"]) {
+        try {
+          const stop = await listen<FlashEventDto>(channel, (event) => {
+            handleEventRef.current(event.payload);
+          });
+          if (cancelled) {
+            stop();
+          } else {
+            unlisteners.push(stop);
+          }
+        } catch {
+          // Not running inside Tauri (browser preview or tests).
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      unlisteners.forEach((stop) => stop());
+    };
   }, []);
 
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => stopPolling();
-  }, [stopPolling]);
+  /// Drains events buffered before the subscription was established, or by a
+  /// backend that could not emit.
+  const drainBufferedEvents = useCallback(async () => {
+    try {
+      const events = await invoke<FlashEventDto[]>("get_flash_events");
+      for (const event of events) {
+        handleEventRef.current(event);
+      }
+    } catch {
+      // No Tauri backend to drain.
+    }
+  }, []);
 
   // ── Probe Discovery ──────────────────────────────────────────────────────
 
@@ -230,6 +253,154 @@ export function useFlashProgrammer() {
     [dispatch, addLog]
   );
 
+  // ── Cancellation ─────────────────────────────────────────────────────────
+
+  /// Distinguishes a cancellation the user asked for from a genuine failure,
+  /// which the backend reports through the same error channel.
+  const reportFailure = useCallback(
+    (err: unknown, prefix: string) => {
+      const message = `${err}`;
+      if (message.toLowerCase().includes("cancel")) {
+        dispatch({ type: "SET_FLASH_STATUS", status: "cancelled" });
+        addLog("warn", "Operation cancelled");
+        setTimeout(() => {
+          dispatch({ type: "SET_FLASH_STATUS", status: "idle" });
+        }, 3000);
+      } else {
+        dispatch({ type: "SET_FLASH_STATUS", status: "error" });
+        addLog("error", `${prefix}: ${message}`);
+      }
+    },
+    [dispatch, addLog]
+  );
+
+  const cancelOperation = useCallback(async () => {
+    dispatch({ type: "SET_FLASH_STATUS", status: "cancelling" });
+    try {
+      await invoke<string>("cancel_operation");
+    } catch (err) {
+      addLog("error", `Cancel request failed: ${err}`);
+    }
+  }, [dispatch, addLog]);
+
+  // ── Memory ───────────────────────────────────────────────────────────────
+
+  const readMemory = useCallback(
+    async (address: number, length: number): Promise<MemoryRead | null> => {
+      try {
+        return await invoke<MemoryRead>("read_memory", { address, length });
+      } catch (err) {
+        addLog("error", `Memory read failed: ${err}`);
+        return null;
+      }
+    },
+    [addLog]
+  );
+
+  /// Bytes the loaded image places in a window, `null` where it covers nothing.
+  const readFirmwareWindow = useCallback(
+    async (address: number, length: number): Promise<(number | null)[] | null> => {
+      if (!state.firmwarePath) return null;
+      try {
+        return await invoke<(number | null)[]>("read_firmware_window", {
+          path: state.firmwarePath,
+          baseAddress: null,
+          address,
+          length,
+        });
+      } catch (err) {
+        addLog("error", `Firmware comparison failed: ${err}`);
+        return null;
+      }
+    },
+    [state.firmwarePath, addLog]
+  );
+
+  const saveMemoryRegion = useCallback(
+    async (path: string, address: number, length: number): Promise<boolean> => {
+      try {
+        const message = await invoke<string>("save_memory_region", {
+          path,
+          address,
+          length,
+        });
+        addLog("success", message);
+        return true;
+      } catch (err) {
+        addLog("error", `Failed to save region: ${err}`);
+        return false;
+      }
+    },
+    [addLog]
+  );
+
+  // ── Profiles ─────────────────────────────────────────────────────────────
+  //
+  // Backed by the same TOML store the CLI uses, so a profile saved here works
+  // from the command line too.
+
+  const listProfiles = useCallback(async (): Promise<ProfileSummary[]> => {
+    try {
+      return await invoke<ProfileSummary[]>("list_profiles");
+    } catch (err) {
+      addLog("error", `Failed to list profiles: ${err}`);
+      return [];
+    }
+  }, [addLog]);
+
+  const loadProfile = useCallback(
+    async (name: string): Promise<Profile | null> => {
+      try {
+        const profile = await invoke<Profile>("load_profile", { name });
+        addLog("info", `Loaded profile "${profile.name}" (${profile.target})`);
+        if (profile.firmware_path) {
+          await loadFirmware(profile.firmware_path);
+        }
+        dispatch({
+          type: "SET_FLASH_OPTIONS",
+          options: {
+            verify: profile.verify,
+            reset: profile.reset,
+            chipErase: profile.full_chip_erase,
+          },
+        });
+        return profile;
+      } catch (err) {
+        addLog("error", `Failed to load profile: ${err}`);
+        return null;
+      }
+    },
+    [addLog, dispatch, loadFirmware]
+  );
+
+  const saveProfile = useCallback(
+    async (profile: Profile): Promise<boolean> => {
+      try {
+        const path = await invoke<string>("save_profile", { profile });
+        addLog("success", `Saved profile "${profile.name}" to ${path}`);
+        return true;
+      } catch (err) {
+        addLog("error", `Failed to save profile: ${err}`);
+        return false;
+      }
+    },
+    [addLog]
+  );
+
+  const deleteProfile = useCallback(
+    async (name: string): Promise<boolean> => {
+      try {
+        await invoke<string>("delete_profile", { name });
+        addLog("info", `Deleted profile "${name}"`);
+        return true;
+      } catch (err) {
+        addLog("error", `Failed to delete profile: ${err}`);
+        return false;
+      }
+    },
+    [addLog]
+  );
+
   // ── Flash ────────────────────────────────────────────────────────────────
 
   const flashFirmware = useCallback(async () => {
@@ -240,7 +411,6 @@ export function useFlashProgrammer() {
 
     dispatch({ type: "SET_FLASH_STATUS", status: "programming" });
     dispatch({ type: "RESET_PROGRESS" });
-    startPolling();
     addLog("info", "Starting flash operation...");
 
     try {
@@ -264,21 +434,17 @@ export function useFlashProgrammer() {
         dispatch({ type: "SET_FLASH_STATUS", status: "idle" });
       }, 3000);
     } catch (err) {
-      dispatch({ type: "SET_FLASH_STATUS", status: "error" });
-      addLog("error", `Flash failed: ${err}`);
+      reportFailure(err, "Flash failed");
     } finally {
-      stopPolling();
-      // Drain any remaining events
-      await processEvents();
+      await drainBufferedEvents();
     }
   }, [
     state.firmwarePath,
     state.flashOptions,
     dispatch,
     addLog,
-    startPolling,
-    stopPolling,
-    processEvents,
+    drainBufferedEvents,
+    reportFailure,
   ]);
 
   // ── Erase ────────────────────────────────────────────────────────────────
@@ -286,7 +452,6 @@ export function useFlashProgrammer() {
   const eraseChip = useCallback(async () => {
     dispatch({ type: "SET_FLASH_STATUS", status: "erasing" });
     dispatch({ type: "RESET_PROGRESS" });
-    startPolling();
     addLog("info", "Starting chip erase...");
 
     try {
@@ -297,13 +462,11 @@ export function useFlashProgrammer() {
         dispatch({ type: "SET_FLASH_STATUS", status: "idle" });
       }, 3000);
     } catch (err) {
-      dispatch({ type: "SET_FLASH_STATUS", status: "error" });
-      addLog("error", `Erase failed: ${err}`);
+      reportFailure(err, "Erase failed");
     } finally {
-      stopPolling();
-      await processEvents();
+      await drainBufferedEvents();
     }
-  }, [dispatch, addLog, startPolling, stopPolling, processEvents]);
+  }, [dispatch, addLog, drainBufferedEvents, reportFailure]);
 
   // ── Verify ───────────────────────────────────────────────────────────────
 
@@ -315,7 +478,6 @@ export function useFlashProgrammer() {
 
     dispatch({ type: "SET_FLASH_STATUS", status: "verifying" });
     dispatch({ type: "RESET_PROGRESS" });
-    startPolling();
     addLog("info", "Starting verification...");
 
     try {
@@ -340,19 +502,16 @@ export function useFlashProgrammer() {
         dispatch({ type: "SET_FLASH_STATUS", status: "idle" });
       }, 3000);
     } catch (err) {
-      dispatch({ type: "SET_FLASH_STATUS", status: "error" });
-      addLog("error", `Verify failed: ${err}`);
+      reportFailure(err, "Verify failed");
     } finally {
-      stopPolling();
-      await processEvents();
+      await drainBufferedEvents();
     }
   }, [
     state.firmwarePath,
     dispatch,
     addLog,
-    startPolling,
-    stopPolling,
-    processEvents,
+    drainBufferedEvents,
+    reportFailure,
   ]);
 
   // ── Reset ────────────────────────────────────────────────────────────────
@@ -384,5 +543,13 @@ export function useFlashProgrammer() {
     eraseChip,
     verifyFirmware,
     resetTarget,
+    cancelOperation,
+    readMemory,
+    readFirmwareWindow,
+    saveMemoryRegion,
+    listProfiles,
+    loadProfile,
+    saveProfile,
+    deleteProfile,
   };
 }

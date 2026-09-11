@@ -1,5 +1,6 @@
 pub mod error;
 pub mod manager;
+pub mod profile;
 pub mod progress;
 pub mod traits;
 pub mod types;
@@ -34,3 +35,8 @@ pub use mock::{
 pub use live::{ProbeRsLiveBackend, ProbeRsLiveSession};
 
 pub use unified::UnifiedBackend;
+
+pub use profile::{
+    delete_profile, list_profiles, load_profile, resolve_profile_path, save_profile, FlashProfile,
+    ProfileError, ProfileSummary,
+};
