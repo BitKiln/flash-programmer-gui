@@ -1,0 +1,45 @@
+# Rust
+/target/
+**/target/
+**/*.rs.bk
+*.pdb
+
+# Node / Frontend
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+dist-ssr/
+**/dist-ssr/
+*.local
+.npm
+.eslintcache
+
+# Tauri
+apps/gui/src-tauri/target/
+
+# Agent scratch and reports (optional internal agent traces)
+# .agents/
+
+# System and Environment
+.env
+.env.*
+!.env.example
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE & Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Test & Debug Binaries / Dumps
+/binaries/
+**/binaries/
+/graphify-out/
+*.log
