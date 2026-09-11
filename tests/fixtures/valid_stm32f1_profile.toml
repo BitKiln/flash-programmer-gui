@@ -1,0 +1,17 @@
+[profile]
+schema_version = 1
+name = "stm32f1_prod"
+description = "STM32F103C8 production profile"
+target = "STM32F103C8"
+interface = "SWD"
+speed_khz = 1000
+probe_id = "mock:stm32f103"
+
+[firmware]
+default_path = "tests/fixtures/valid_exact_sector_1kb.bin"
+base_address = "0x08000000"
+
+[options]
+verify_after = true
+reset_after = true
+full_chip_erase = true

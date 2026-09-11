@@ -1,0 +1,33 @@
+[package]
+name = "flashgui-cli"
+version = "0.1.0"
+edition = "2021"
+authors = ["Flash Programmer GUI Team"]
+description = "Headless CLI companion for probe discovery, erasing, flashing, verifying, and profile management"
+license = "MIT OR Apache-2.0"
+
+[[bin]]
+name = "flashgui-cli"
+path = "src/main.rs"
+
+[lib]
+name = "flashgui_cli"
+path = "src/lib.rs"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+directories = "5.0"
+firmware-parser = { path = "../firmware-parser" }
+flash-core = { path = "../flash-core", features = ["mock-probe"] }
+
+[features]
+default = []
+live-probe = ["flash-core/live-probe"]
+
+[dev-dependencies]
+tempfile = "3.10"
+assert_cmd = "2.0"
+predicates = "3.1"

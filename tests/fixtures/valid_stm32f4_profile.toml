@@ -1,0 +1,17 @@
+[profile]
+schema_version = 1
+name = "stm32f4_dev"
+description = "STM32F401RE development profile"
+target = "STM32F401RE"
+interface = "SWD"
+speed_khz = 2000
+probe_id = "mock:stm32f401"
+
+[firmware]
+default_path = "tests/fixtures/valid_stm32_single_segment.hex"
+base_address = "0x08000000"
+
+[options]
+verify_after = true
+reset_after = true
+full_chip_erase = false

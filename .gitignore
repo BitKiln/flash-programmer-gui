@@ -11,6 +11,8 @@ dist/
 **/dist/
 dist-ssr/
 **/dist-ssr/
+.vite/
+**/vite/
 *.local
 .npm
 .eslintcache
