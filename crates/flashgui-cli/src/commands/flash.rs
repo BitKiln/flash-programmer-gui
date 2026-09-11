@@ -39,7 +39,7 @@ pub fn handle_flash(
         .target
         .clone()
         .or_else(|| profile.as_ref().map(|p| p.target().to_string()))
-        .unwrap_or_else(|| "STM32F401RE".to_string());
+        .unwrap_or_else(|| "auto".to_string());
 
     if !is_supported_target(&target, cli.mock) {
         return Err(CliError::TargetConnection(format!(

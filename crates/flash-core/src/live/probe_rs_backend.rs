@@ -3,6 +3,7 @@ use std::time::Instant;
 use firmware_parser::MemorySegment;
 use probe_rs::flashing::{DownloadOptions, FlashProgress};
 use probe_rs::probe::list::Lister;
+use probe_rs::probe::Probe;
 use probe_rs::probe::WireProtocol as RsWireProtocol;
 use probe_rs::{MemoryInterface, Permissions, Session};
 
@@ -22,6 +23,106 @@ impl ProbeRsLiveBackend {
     pub fn new() -> Self {
         Self
     }
+}
+
+pub(crate) fn open_probe_internal(
+    matched: &probe_rs::probe::DebugProbeInfo,
+    config: &ConnectionConfig,
+) -> Result<Probe, FlashError> {
+    let mut probe = matched.open().map_err(|e| {
+        let err_str = e.to_string();
+        if err_str.contains("code: Some(5)")
+            || err_str.contains("Access is denied")
+            || err_str.contains("failed to open device")
+        {
+            FlashError::ProbeCommunication(
+                "Access denied: Probe is currently held exclusively by another application (e.g. STM32CubeProgrammer, STM32CubeIDE, or OpenOCD). Please close or disconnect other tools and try again.".to_string(),
+            )
+        } else {
+            FlashError::ProbeCommunication(err_str)
+        }
+    })?;
+
+    let protocol = match config.protocol {
+        WireProtocol::Swd => RsWireProtocol::Swd,
+        WireProtocol::Jtag => RsWireProtocol::Jtag,
+    };
+    probe
+        .select_protocol(protocol)
+        .map_err(|e| FlashError::ProbeCommunication(e.to_string()))?;
+    probe
+        .set_speed(config.speed_khz)
+        .map_err(|e| FlashError::ProbeCommunication(e.to_string()))?;
+
+    Ok(probe)
+}
+
+/// Resolves a stored probe identifier against the probes currently connected.
+///
+/// Matching is deliberately forgiving: a probe can re-enumerate (changing the
+/// identifier string) between listing and connecting, particularly after a
+/// failed attach, and the stored id would otherwise go stale.
+fn resolve_probe(
+    probes: Vec<probe_rs::probe::DebugProbeInfo>,
+    probe_id: Option<&str>,
+) -> Result<probe_rs::probe::DebugProbeInfo, FlashError> {
+    if probes.is_empty() {
+        return Err(FlashError::ProbeNotFound(
+            "No debug probe connected. Plug in an ST-Link, J-Link or CMSIS-DAP probe and refresh."
+                .to_string(),
+        ));
+    }
+
+    let Some(pid) = probe_id else {
+        return Ok(probes.into_iter().next().expect("probes is non-empty"));
+    };
+
+    // Tier 1: exact "identifier:serial", or bare identifier.
+    if let Some(p) = probes.iter().find(|p| probe_identifier(p) == pid || p.identifier == pid) {
+        return Ok(p.clone());
+    }
+
+    // Tier 2: serial number alone - survives an identifier string change.
+    let serial_part = pid.rsplit(':').next().unwrap_or(pid);
+    if serial_part != "unknown" {
+        if let Some(p) = probes
+            .iter()
+            .find(|p| p.serial_number.as_deref() == Some(serial_part))
+        {
+            return Ok(p.clone());
+        }
+    }
+
+    // Tier 3: same USB vendor/product pair.
+    if let Some(p) = probes
+        .iter()
+        .find(|p| format!("{:04x}:{:04x}", p.vendor_id, p.product_id) == pid)
+    {
+        return Ok(p.clone());
+    }
+
+    // Tier 4: only one probe is connected - it is what the user meant.
+    if probes.len() == 1 {
+        return Ok(probes.into_iter().next().expect("len == 1"));
+    }
+
+    let available = probes
+        .iter()
+        .map(probe_identifier)
+        .collect::<Vec<_>>()
+        .join(", ");
+    Err(FlashError::ProbeNotFound(format!(
+        "probe '{pid}' is no longer connected. Connected probes: {available}"
+    )))
+}
+
+/// Stable identifier string for a probe, shared by listing and matching.
+fn probe_identifier(p: &probe_rs::probe::DebugProbeInfo) -> String {
+    format!(
+        "{}:{}",
+        p.identifier,
+        p.serial_number.as_deref().unwrap_or("unknown")
+    )
 }
 
 impl FlashBackend for ProbeRsLiveBackend {
@@ -71,52 +172,116 @@ impl FlashBackend for ProbeRsLiveBackend {
     fn open_session(&self, config: &ConnectionConfig) -> Result<Box<dyn FlashSession>, FlashError> {
         let lister = Lister::new();
         let probes = lister.list_all();
-        let matched = if let Some(ref pid) = config.probe_id {
-            probes
-                .into_iter()
-                .find(|p| {
-                    let id = format!(
-                        "{}:{}",
-                        p.identifier,
-                        p.serial_number.as_deref().unwrap_or("unknown")
-                    );
-                    id == *pid || p.identifier == *pid
-                })
-                .ok_or_else(|| FlashError::ProbeNotFound(pid.clone()))?
+        let matched = resolve_probe(probes, config.probe_id.as_deref())?;
+
+        let is_auto = config.target_name.trim().is_empty()
+            || config.target_name.eq_ignore_ascii_case("auto")
+            || config.target_name.eq_ignore_ascii_case("default");
+
+        let permissions = || Permissions::new().allow_erase_all();
+
+        let session = if is_auto {
+            // probe-rs' own auto detection first - it covers every chip whose
+            // debug interface advertises a recognisable identification code.
+            let probe = open_probe_internal(&matched, config)?;
+            let auto_res = if config.connect_under_reset {
+                probe.attach_under_reset(probe_rs::config::TargetSelector::Auto, permissions())
+            } else {
+                probe.attach(probe_rs::config::TargetSelector::Auto, permissions())
+            };
+
+            match auto_res {
+                Ok(s) => s,
+                Err(e) => {
+                    // Fall back to reading the chip's own ID registers and
+                    // resolving the result through the target registry.
+                    let detected = crate::live::detect::detect(&matched, config);
+
+                    let selector = match (&detected.chip, detected.core) {
+                        (Some(chip), _) => probe_rs::config::TargetSelector::from(chip.as_str()),
+                        (None, Some(core)) => probe_rs::config::TargetSelector::from(core),
+                        (None, None) => {
+                            return Err(FlashError::ConnectError(format!(
+                                "Auto-detection failed: {e}. The target did not respond on SWD/JTAG. Check wiring and power, try 'connect under reset', or enter the MCU part number directly."
+                            )));
+                        }
+                    };
+
+                    let label = detected
+                        .chip
+                        .clone()
+                        .unwrap_or_else(|| detected.core.unwrap_or("unknown").to_string());
+
+                    let probe = open_probe_internal(&matched, config)?;
+                    let attached = if config.connect_under_reset {
+                        probe.attach_under_reset(selector, permissions())
+                    } else {
+                        probe.attach(selector, permissions())
+                    }
+                    .map_err(|e2| {
+                        FlashError::ConnectError(format!(
+                            "Detected target '{label}', but attach failed: {e2}"
+                        ))
+                    })?;
+
+                    attached
+                }
+            }
         } else {
-            probes
-                .into_iter()
-                .next()
-                .ok_or_else(|| FlashError::ProbeNotFound("No connected probe found".to_string()))?
+            // Manual entry: try the raw name, then a board alias, then report
+            // near matches from the registry instead of a bare failure.
+            let raw = config.target_name.trim();
+            let probe = open_probe_internal(&matched, config)?;
+            let first = if config.connect_under_reset {
+                probe.attach_under_reset(probe_rs::config::TargetSelector::from(raw), permissions())
+            } else {
+                probe.attach(probe_rs::config::TargetSelector::from(raw), permissions())
+            };
+
+            match first {
+                Ok(s) => s,
+                Err(first_err) => {
+                    let alias = crate::mock::profiles::resolve_target_alias(raw);
+                    let retry = match alias {
+                        Some(canonical) if !canonical.eq_ignore_ascii_case(raw) => {
+                            let probe = open_probe_internal(&matched, config)?;
+                            let sel = probe_rs::config::TargetSelector::from(canonical);
+                            if config.connect_under_reset {
+                                probe.attach_under_reset(sel, permissions()).ok()
+                            } else {
+                                probe.attach(sel, permissions()).ok()
+                            }
+                        }
+                        _ => None,
+                    };
+
+                    match retry {
+                        Some(s) => s,
+                        None => {
+                            let near = crate::live::detect::suggestions(raw);
+                            let hint = if near.is_empty() {
+                                String::new()
+                            } else {
+                                format!(" Did you mean: {}?", near.join(", "))
+                            };
+                            return Err(FlashError::ConnectError(format!(
+                                "Could not connect to '{raw}': {first_err}.{hint}"
+                            )));
+                        }
+                    }
+                }
+            }
         };
 
-        let mut probe = matched
-            .open()
-            .map_err(|e| FlashError::ProbeCommunication(e.to_string()))?;
-
-        let protocol = match config.protocol {
-            WireProtocol::Swd => RsWireProtocol::Swd,
-            WireProtocol::Jtag => RsWireProtocol::Jtag,
-        };
-        probe
-            .select_protocol(protocol)
-            .map_err(|e| FlashError::ProbeCommunication(e.to_string()))?;
-        probe
-            .set_speed(config.speed_khz)
-            .map_err(|e| FlashError::ProbeCommunication(e.to_string()))?;
-
-        let permissions = Permissions::default();
-        let target_selector = config.target_name.as_str();
-
-        let session = if config.connect_under_reset {
-            probe
-                .attach_under_reset(target_selector, permissions)
-                .map_err(|e| FlashError::ConnectError(e.to_string()))?
-        } else {
-            probe
-                .attach(target_selector, permissions)
-                .map_err(|e| FlashError::ConnectError(e.to_string()))?
-        };
+        // A wrong manual target attaches fine and only misbehaves at erase or
+        // program time, so reject it here while the failure is still explainable.
+        let mut session = session;
+        if !is_auto {
+            if let Some(reason) = crate::live::detect::target_mismatch(&mut session, &config.target_name)
+            {
+                return Err(FlashError::ConnectError(reason));
+            }
+        }
 
         Ok(Box::new(ProbeRsLiveSession::new(session, config)))
     }
@@ -129,13 +294,202 @@ pub struct ProbeRsLiveSession {
 }
 
 impl ProbeRsLiveSession {
-    pub fn new(session: Session, config: &ConnectionConfig) -> Self {
-        let target_info = crate::mock::profiles::get_target_by_name(&config.target_name);
+    pub fn new(mut session: Session, _config: &ConnectionConfig) -> Self {
+        let mut target_info = target_info_from_session(&session);
+
+        // Refine the human-readable label from on-chip identification. This
+        // never touches `name`, which must stay resolvable by the registry.
+        if let Some(display) = read_display_name(&mut session) {
+            if let Some(ref mut info) = target_info {
+                info.display_name = Some(display);
+            }
+        }
+
         Self {
             session,
             target_info,
         }
     }
+}
+
+/// Builds target geometry from the probe-rs target description, which is the
+/// authoritative memory map for the attached chip.
+fn target_info_from_session(session: &Session) -> Option<TargetInfo> {
+    let target = session.target();
+
+    // Chips commonly split flash and RAM into several banks, plus aliased
+    // views of the same memory. Sum the real banks of each kind and take the
+    // lowest base, so a dual-bank part reports its whole flash.
+    let mut flash: Option<(u64, u64)> = None;
+    let mut ram: Option<(u64, u64)> = None;
+    for region in &target.memory_map {
+        match region {
+            probe_rs::config::MemoryRegion::Nvm(nvm) if !nvm.is_alias && !is_aux_nvm(nvm) => {
+                let size = nvm.range.end.saturating_sub(nvm.range.start);
+                flash = Some(match flash {
+                    Some((base, total)) => (base.min(nvm.range.start), total + size),
+                    None => (nvm.range.start, size),
+                });
+            }
+            probe_rs::config::MemoryRegion::Ram(r) if !r.is_alias => {
+                let size = r.range.end.saturating_sub(r.range.start);
+                // Count every bank towards the total, but report the base of
+                // the conventional SRAM window: an H7 maps ITCM at 0x00000000,
+                // and quoting that as "the RAM base" is misleading.
+                let conventional = r.range.start >= 0x2000_0000;
+                ram = Some(match ram {
+                    Some((base, total)) if conventional => (base.min(r.range.start), total + size),
+                    Some((base, total)) => (base, total + size),
+                    None => (r.range.start, size),
+                });
+            }
+            _ => {}
+        }
+    }
+
+    let (flash_base, flash_size) = flash.unwrap_or((0x0800_0000, 0));
+    let (ram_base, ram_size) = ram.unwrap_or((0x2000_0000, 0));
+    let ram_base = target
+        .memory_map
+        .iter()
+        .filter_map(|region| match region {
+            probe_rs::config::MemoryRegion::Ram(r) if !r.is_alias && r.range.start >= 0x2000_0000 => {
+                Some(r.range.start)
+            }
+            _ => None,
+        })
+        .min()
+        .unwrap_or(ram_base);
+
+    // Sector layout and page size come from the flash algorithm covering the
+    // selected flash region.
+    let props = target
+        .flash_algorithms
+        .iter()
+        .map(|a| &a.flash_properties)
+        .find(|p| p.address_range.start == flash_base)
+        .or_else(|| target.flash_algorithms.first().map(|a| &a.flash_properties));
+
+    let page_size = props.map(|p| p.page_size).filter(|s| *s > 0).unwrap_or(256);
+    let sectors = props
+        .map(|p| expand_sectors(p, flash_base, flash_size))
+        .unwrap_or_default();
+
+    Some(TargetInfo {
+        name: target.name.clone(),
+        display_name: None,
+        architecture: target
+            .cores
+            .first()
+            .map(|c| format!("{:?}", c.core_type))
+            .unwrap_or_else(|| "Cortex-M".to_string()),
+        flash_base: flash_base as u32,
+        flash_size: flash_size as u32,
+        ram_base: ram_base as u32,
+        ram_size: ram_size as u32,
+        page_size,
+        sectors,
+    })
+}
+
+/// Address ranges of the erasable program flash, in ascending order.
+///
+/// Excludes aliases and regions no flash algorithm can program (OTP, option
+/// bytes, external-memory placeholders). Note that `access.write` is false for
+/// ordinary flash too - it describes CPU stores, not programmability.
+fn program_flash_ranges(session: &Session) -> Vec<std::ops::Range<u64>> {
+    let target = session.target();
+    let mut ranges: Vec<std::ops::Range<u64>> = target
+        .memory_map
+        .iter()
+        .filter_map(|region| match region {
+            probe_rs::config::MemoryRegion::Nvm(nvm) if !nvm.is_alias && !is_aux_nvm(nvm) => {
+                Some(nvm.range.clone())
+            }
+            _ => None,
+        })
+        .filter(|range| {
+            target.flash_algorithms.iter().any(|algo| {
+                let covered = &algo.flash_properties.address_range;
+                covered.start < range.end && covered.end > range.start
+            })
+        })
+        .collect();
+    ranges.sort_by_key(|r| r.start);
+    ranges
+}
+
+/// True for non-program flash regions (OTP, option bytes, EEPROM) that should
+/// not count towards the usable program flash.
+fn is_aux_nvm(nvm: &probe_rs::config::NvmRegion) -> bool {
+    let Some(name) = nvm.name.as_deref() else {
+        return false;
+    };
+    let name = name.to_lowercase();
+    name.contains("otp") || name.contains("option") || name.contains("eeprom")
+}
+
+/// Expands probe-rs sector *descriptions* (a size plus the offset it starts
+/// applying from) into the concrete sector list this crate uses.
+fn expand_sectors(
+    props: &probe_rs::config::FlashProperties,
+    flash_base: u64,
+    flash_size: u64,
+) -> Vec<crate::types::SectorInfo> {
+    let mut out = Vec::new();
+    let descriptions = &props.sectors;
+    if descriptions.is_empty() || flash_size == 0 {
+        return out;
+    }
+
+    let flash_end = flash_base.saturating_add(flash_size);
+    let mut index = 0u32;
+    for (i, desc) in descriptions.iter().enumerate() {
+        if desc.size == 0 {
+            continue;
+        }
+        // A description applies until the next one starts, or to the end of flash.
+        let start = flash_base.saturating_add(desc.address);
+        let end = descriptions
+            .get(i + 1)
+            .map(|next| flash_base.saturating_add(next.address))
+            .unwrap_or(flash_end)
+            .min(flash_end);
+
+        let mut addr = start;
+        while addr < end {
+            out.push(crate::types::SectorInfo {
+                index,
+                address: addr as u32,
+                size: desc.size as u32,
+            });
+            index += 1;
+            addr = addr.saturating_add(desc.size);
+        }
+    }
+    out
+}
+
+/// Reads DBGMCU identification to produce a friendlier chip/board label.
+///
+/// Purely cosmetic - failure simply means no label.
+fn read_display_name(session: &mut Session) -> Option<String> {
+    let mut core = session.core(0).ok()?;
+    for addr in [0xE004_2000u64, 0x5C00_1000, 0xE004_4000, 0x4001_5800] {
+        let Ok(val) = core.read_word_32(addr) else {
+            continue;
+        };
+        if val == 0 || val == u32::MAX {
+            continue;
+        }
+        let dev_id = val & 0x0FFF;
+        let rev = val >> 16;
+        if dev_id == 0 || dev_id == 0x0FFF {
+            continue;
+        }
+        return Some(format!("dev 0x{dev_id:03X} rev 0x{rev:04X}"));
+    }
+    None
 }
 
 impl FlashSession for ProbeRsLiveSession {
@@ -152,9 +506,22 @@ impl FlashSession for ProbeRsLiveSession {
             });
         }
 
+        // probe_rs::flashing::erase_all() walks *every* NVM region, including
+        // read-only ones such as the U5 OTP area at 0x0BFA_0000, which have no
+        // flash algorithm and abort the erase. Erase the program-flash regions
+        // explicitly instead.
+        let regions = program_flash_ranges(&self.session);
+        if regions.is_empty() {
+            return Err(FlashError::EraseError(
+                "No erasable program flash region found for this target".to_string(),
+            ));
+        }
+
         let mut progress = FlashProgress::empty();
-        probe_rs::flashing::erase_all(&mut self.session, &mut progress, false)
-            .map_err(|e| FlashError::EraseError(e.to_string()))?;
+        for range in regions {
+            probe_rs::flashing::erase(&mut self.session, &mut progress, range.start, range.end, false)
+                .map_err(|e| FlashError::EraseError(e.to_string()))?;
+        }
 
         if let Some(callback) = cb {
             callback.on_event(FlashEvent::StageCompleted {

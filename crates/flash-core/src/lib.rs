@@ -10,6 +10,8 @@ pub mod mock;
 #[cfg(feature = "live-probe")]
 pub mod live;
 
+pub mod unified;
+
 pub use error::FlashError;
 pub use manager::FlashManager;
 pub use progress::{
@@ -30,3 +32,5 @@ pub use mock::{
 
 #[cfg(feature = "live-probe")]
 pub use live::{ProbeRsLiveBackend, ProbeRsLiveSession};
+
+pub use unified::UnifiedBackend;

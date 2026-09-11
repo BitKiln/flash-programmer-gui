@@ -14,7 +14,10 @@ export interface ProbeInfo {
 // ── Target types ─────────────────────────────────────────────────────────────
 
 export interface TargetInfo {
+  /** Registry-resolvable chip name; safe to feed back into connect. */
   name: string;
+  /** Extra identification read from the chip, display only. */
+  display_name: string | null;
   architecture: string;
   flash_base: number;
   flash_size: number;

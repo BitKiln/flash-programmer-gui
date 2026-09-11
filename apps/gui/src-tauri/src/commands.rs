@@ -26,6 +26,7 @@ pub struct ProbeInfoDto {
 #[derive(Debug, Clone, Serialize)]
 pub struct TargetInfoDto {
     pub name: String,
+    pub display_name: Option<String>,
     pub architecture: String,
     pub flash_base: u32,
     pub flash_size: u32,
@@ -247,6 +248,7 @@ pub fn connect_probe(
     match target_info {
         Some(info) => Ok(TargetInfoDto {
             name: info.name,
+            display_name: info.display_name,
             architecture: info.architecture,
             flash_base: info.flash_base,
             flash_size: info.flash_size,
@@ -257,6 +259,56 @@ pub fn connect_probe(
         }),
         None => Err("Connected but target info not available".to_string()),
     }
+}
+
+#[tauri::command]
+pub fn auto_detect_target(
+    state: State<'_, AppState>,
+    probe_id: Option<String>,
+    protocol: String,
+    speed: u32,
+) -> Result<TargetInfoDto, String> {
+    // Close any existing session first
+    {
+        let mut session_guard = state.session.lock().map_err(|e| e.to_string())?;
+        if let Some(ref mut s) = *session_guard {
+            let _ = s.close();
+        }
+        *session_guard = None;
+    }
+
+    let config = ConnectionConfig {
+        probe_id,
+        target_name: "auto".to_string(),
+        protocol: parse_protocol(&protocol),
+        speed_khz: speed,
+        connect_under_reset: false,
+        reset_type: None,
+    };
+
+    let backend = state.backend.lock().map_err(|e| e.to_string())?;
+    let session = backend.open_session(&config).map_err(|e| e.to_string())?;
+
+    let target_info = session.target_info().cloned().ok_or_else(|| {
+        "Could not detect target MCU information from connected probe".to_string()
+    })?;
+
+    let dto = TargetInfoDto {
+        name: target_info.name,
+        display_name: target_info.display_name,
+        architecture: target_info.architecture,
+        flash_base: target_info.flash_base,
+        flash_size: target_info.flash_size,
+        ram_base: target_info.ram_base,
+        ram_size: target_info.ram_size,
+        page_size: target_info.page_size,
+        sector_count: target_info.sectors.len(),
+    };
+
+    let mut session_guard = state.session.lock().map_err(|e| e.to_string())?;
+    *session_guard = Some(session);
+
+    Ok(dto)
 }
 
 #[tauri::command]
@@ -391,6 +443,22 @@ pub fn reset_target(state: State<'_, AppState>, halt: bool) -> Result<String, St
     } else {
         "Target reset successfully".to_string()
     })
+}
+
+/// Closes the active session and releases the debug probe.
+///
+/// Leaving the probe held blocks other tools (STM32CubeProgrammer, OpenOCD)
+/// and a second run of this app, so disconnecting must be explicit.
+#[tauri::command]
+pub fn disconnect_probe(state: State<'_, AppState>) -> Result<String, String> {
+    let mut session_guard = state.session.lock().map_err(|e| e.to_string())?;
+    match session_guard.take() {
+        Some(mut session) => {
+            session.close().map_err(|e| e.to_string())?;
+            Ok("Disconnected from target".to_string())
+        }
+        None => Ok("No active session".to_string()),
+    }
 }
 
 #[tauri::command]

@@ -18,7 +18,7 @@ impl Default for AppState {
         Self {
             session: Mutex::new(None),
             events: Mutex::new(Vec::new()),
-            backend: Mutex::new(Box::new(flash_core::MockProbeBackend::new())),
+            backend: Mutex::new(Box::new(flash_core::UnifiedBackend::new())),
         }
     }
 }

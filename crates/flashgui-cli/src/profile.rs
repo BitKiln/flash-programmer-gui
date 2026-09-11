@@ -12,7 +12,7 @@ fn default_schema_version() -> u32 {
 }
 
 fn default_target() -> String {
-    "STM32F401RE".to_string()
+    "auto".to_string()
 }
 
 fn default_interface() -> String {
