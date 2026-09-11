@@ -39,6 +39,26 @@ export interface FirmwareInfo {
   segment_count: number;
   entry_point: number | null;
   crc32: number;
+  entry_point_source: string;
+  segments: SegmentInfo[];
+  gaps: MemoryGap[];
+}
+
+/** One contiguous block the image will write. */
+export interface SegmentInfo {
+  index: number;
+  start_address: number;
+  end_address: number;
+  size_bytes: number;
+  /** Uppercase hex string, as the parser formats it. */
+  crc32: string;
+}
+
+/** An unwritten span between two segments. */
+export interface MemoryGap {
+  start_address: number;
+  end_address: number;
+  size: number;
 }
 
 // ── Flash operation types ────────────────────────────────────────────────────
@@ -145,6 +165,8 @@ export type FlashStatus =
   | "programming"
   | "verifying"
   | "resetting"
+  | "cancelling"
+  | "cancelled"
   | "completed"
   | "error";
 
@@ -162,4 +184,28 @@ export interface AppState {
   progress: ProgressInfo;
   logs: LogEntry[];
   recentFiles: string[];
+}
+
+// ── Profiles ─────────────────────────────────────────────────────────────────
+
+/** A saved programming profile, shared with the CLI's TOML store. */
+export interface Profile {
+  name: string;
+  description: string | null;
+  target: string;
+  probe_id: string | null;
+  interface: string;
+  speed_khz: number;
+  firmware_path: string | null;
+  base_address: string | null;
+  verify: boolean;
+  reset: boolean;
+  full_chip_erase: boolean;
+}
+
+export interface ProfileSummary {
+  name: string;
+  description: string | null;
+  target: string;
+  file_path: string;
 }

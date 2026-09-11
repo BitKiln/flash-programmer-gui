@@ -1,3 +1,9 @@
+//! Reusable TOML programming profiles.
+//!
+//! Profiles live here rather than in the CLI so the desktop application reads
+//! and writes exactly the same files: a profile saved from one is usable from
+//! the other.
+
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -5,7 +11,12 @@ use std::path::{Path, PathBuf};
 use directories::BaseDirs;
 use serde::{Deserialize, Serialize};
 
-use crate::exit_codes::CliError;
+/// Failure while resolving, reading, or writing a profile.
+#[derive(Debug, thiserror::Error)]
+pub enum ProfileError {
+    #[error("{0}")]
+    Invalid(String),
+}
 
 fn default_schema_version() -> u32 {
     1
@@ -205,13 +216,13 @@ pub fn user_profiles_dir() -> Option<PathBuf> {
 pub fn resolve_profile_path(
     name: &str,
     custom_profile_file: Option<&Path>,
-) -> Result<PathBuf, CliError> {
+) -> Result<PathBuf, ProfileError> {
     // 1. If explicit custom profile file was provided, use it
     if let Some(custom) = custom_profile_file {
         if custom.exists() {
             return Ok(custom.to_path_buf());
         }
-        return Err(CliError::InvalidArgsOrProfile(format!(
+        return Err(ProfileError::Invalid(format!(
             "Specified profile file '{}' does not exist",
             custom.display()
         )));
@@ -243,7 +254,7 @@ pub fn resolve_profile_path(
         }
     }
 
-    Err(CliError::InvalidArgsOrProfile(format!(
+    Err(ProfileError::Invalid(format!(
         "Profile '{}' not found in local (.flashgui/profiles) or user configuration directory",
         name
     )))
@@ -253,10 +264,10 @@ pub fn resolve_profile_path(
 pub fn load_profile(
     name: &str,
     custom_profile_file: Option<&Path>,
-) -> Result<FlashProfile, CliError> {
+) -> Result<FlashProfile, ProfileError> {
     let path = resolve_profile_path(name, custom_profile_file)?;
     let content = fs::read_to_string(&path).map_err(|e| {
-        CliError::InvalidArgsOrProfile(format!(
+        ProfileError::Invalid(format!(
             "Failed to read profile file '{}': {}",
             path.display(),
             e
@@ -264,7 +275,7 @@ pub fn load_profile(
     })?;
 
     toml::from_str::<FlashProfile>(&content).map_err(|e| {
-        CliError::InvalidArgsOrProfile(format!(
+        ProfileError::Invalid(format!(
             "Failed to parse TOML profile '{}': {}",
             path.display(),
             e
@@ -277,7 +288,7 @@ pub fn load_profile(
 pub fn save_profile(
     profile: &FlashProfile,
     custom_profile_file: Option<&Path>,
-) -> Result<PathBuf, CliError> {
+) -> Result<PathBuf, ProfileError> {
     let target_path = if let Some(custom) = custom_profile_file {
         custom.to_path_buf()
     } else {
@@ -294,7 +305,7 @@ pub fn save_profile(
 
     if let Some(parent) = target_path.parent() {
         fs::create_dir_all(parent).map_err(|e| {
-            CliError::InvalidArgsOrProfile(format!(
+            ProfileError::Invalid(format!(
                 "Failed to create profile directory '{}': {}",
                 parent.display(),
                 e
@@ -303,11 +314,11 @@ pub fn save_profile(
     }
 
     let toml_str = toml::to_string_pretty(profile).map_err(|e| {
-        CliError::InvalidArgsOrProfile(format!("Failed to serialize profile to TOML: {}", e))
+        ProfileError::Invalid(format!("Failed to serialize profile to TOML: {}", e))
     })?;
 
     fs::write(&target_path, toml_str).map_err(|e| {
-        CliError::InvalidArgsOrProfile(format!(
+        ProfileError::Invalid(format!(
             "Failed to write profile file '{}': {}",
             target_path.display(),
             e
@@ -318,7 +329,9 @@ pub fn save_profile(
 }
 
 /// Lists all available profiles from custom file, local project, and user configuration directories.
-pub fn list_profiles(custom_profile_file: Option<&Path>) -> Result<Vec<ProfileSummary>, CliError> {
+pub fn list_profiles(
+    custom_profile_file: Option<&Path>,
+) -> Result<Vec<ProfileSummary>, ProfileError> {
     let mut summaries = BTreeMap::new();
 
     // 1. Check custom profile file if provided
@@ -378,10 +391,10 @@ pub fn list_profiles(custom_profile_file: Option<&Path>) -> Result<Vec<ProfileSu
 pub fn delete_profile(
     name: &str,
     custom_profile_file: Option<&Path>,
-) -> Result<PathBuf, CliError> {
+) -> Result<PathBuf, ProfileError> {
     let path = resolve_profile_path(name, custom_profile_file)?;
     fs::remove_file(&path).map_err(|e| {
-        CliError::InvalidArgsOrProfile(format!(
+        ProfileError::Invalid(format!(
             "Failed to delete profile file '{}': {}",
             path.display(),
             e

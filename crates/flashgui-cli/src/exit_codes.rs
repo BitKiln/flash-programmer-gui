@@ -1,6 +1,6 @@
-use std::fmt;
 use firmware_parser::ParseError;
 use flash_core::FlashError;
+use std::fmt;
 
 pub const EXIT_SUCCESS: i32 = 0;
 pub const EXIT_FLASH_VERIFY_ERROR: i32 = 1;
@@ -57,6 +57,12 @@ impl std::error::Error for CliError {}
 impl From<ParseError> for CliError {
     fn from(err: ParseError) -> Self {
         CliError::FirmwareParse(err.to_string())
+    }
+}
+
+impl From<flash_core::ProfileError> for CliError {
+    fn from(err: flash_core::ProfileError) -> Self {
+        CliError::InvalidArgsOrProfile(err.to_string())
     }
 }
 

@@ -33,6 +33,11 @@ pub fn run() {
             commands::verify_firmware,
             commands::reset_target,
             commands::get_flash_events,
+            commands::cancel_operation,
+            commands::list_profiles,
+            commands::load_profile,
+            commands::save_profile,
+            commands::delete_profile,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -4,13 +4,22 @@ import { ProgressBar } from "./ProgressBar";
 
 export function FlashControls() {
   const { state } = useAppContext();
-  const { flashFirmware, eraseChip, verifyFirmware, resetTarget } =
+  const { flashFirmware, eraseChip, verifyFirmware, resetTarget, cancelOperation } =
     useFlashProgrammer();
 
   const isConnected = state.connectionStatus === "connected";
   const hasFirmware = state.firmware !== null;
   const isBusy =
-    state.flashStatus !== "idle" && state.flashStatus !== "completed" && state.flashStatus !== "error";
+    state.flashStatus !== "idle" &&
+    state.flashStatus !== "completed" &&
+    state.flashStatus !== "cancelled" &&
+    state.flashStatus !== "error";
+  // Reset is a single quick transaction with nothing to poll, so it cannot be
+  // cancelled part way through; everything else stops at a block boundary.
+  const isCancellable =
+    state.flashStatus === "erasing" ||
+    state.flashStatus === "programming" ||
+    state.flashStatus === "verifying";
 
   const statusLabel = (): string => {
     switch (state.flashStatus) {
@@ -22,6 +31,10 @@ export function FlashControls() {
         return "Verifying...";
       case "resetting":
         return "Resetting...";
+      case "cancelling":
+        return "Cancelling...";
+      case "cancelled":
+        return "Cancelled";
       case "completed":
         return "✓ Completed";
       case "error":
@@ -42,6 +55,8 @@ export function FlashControls() {
           className={`text-xs font-medium px-2 py-0.5 rounded ${
             state.flashStatus === "completed"
               ? "bg-green-900/50 text-green-400"
+              : state.flashStatus === "cancelled"
+                ? "bg-gray-700 text-gray-300"
               : state.flashStatus === "error"
                 ? "bg-red-900/50 text-red-400"
                 : isBusy
@@ -53,14 +68,26 @@ export function FlashControls() {
         </span>
       </div>
 
-      {/* Primary Action */}
-      <button
-        onClick={flashFirmware}
-        disabled={!isConnected || !hasFirmware || isBusy}
-        className="w-full py-3 bg-accent-red hover:bg-red-500 text-white rounded-lg text-base font-bold uppercase tracking-wider transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-accent-red shadow-lg shadow-accent-red/20"
-      >
-        {isBusy ? statusLabel() : "⚡ Program"}
-      </button>
+      {/* Primary Action — becomes Cancel while an interruptible operation runs */}
+      {isCancellable || state.flashStatus === "cancelling" ? (
+        <button
+          onClick={cancelOperation}
+          disabled={state.flashStatus === "cancelling"}
+          className="w-full py-3 bg-gray-700 hover:bg-gray-600 text-gray-100 rounded-lg text-base font-bold uppercase tracking-wider transition-colors disabled:opacity-40 disabled:cursor-not-allowed border border-gray-500"
+        >
+          {state.flashStatus === "cancelling"
+            ? "Cancelling..."
+            : `✕ Cancel ${statusLabel().replace("...", "")}`}
+        </button>
+      ) : (
+        <button
+          onClick={flashFirmware}
+          disabled={!isConnected || !hasFirmware || isBusy}
+          className="w-full py-3 bg-accent-red hover:bg-red-500 text-white rounded-lg text-base font-bold uppercase tracking-wider transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-accent-red shadow-lg shadow-accent-red/20"
+        >
+          {isBusy ? statusLabel() : "⚡ Program"}
+        </button>
+      )}
 
       {/* Secondary Actions */}
       <div className="grid grid-cols-3 gap-2">

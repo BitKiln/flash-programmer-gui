@@ -1292,11 +1292,13 @@ name = "flash-core"
 version = "0.1.0"
 dependencies = [
  "crc32fast",
+ "directories",
  "firmware-parser",
  "probe-rs",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
+ "toml 0.8.2",
  "windows-sys 0.59.0",
 ]
 
