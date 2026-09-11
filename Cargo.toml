@@ -4,5 +4,6 @@ members = [
     "crates/firmware-parser",
     "crates/flash-core",
     "crates/flashgui-cli",
+    "crates/e2e-tests",
     "apps/gui/src-tauri",
 ]
