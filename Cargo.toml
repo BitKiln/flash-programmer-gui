@@ -1,0 +1,8 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/firmware-parser",
+    "crates/flash-core",
+    "crates/flashgui-cli",
+    "apps/gui/src-tauri",
+]
