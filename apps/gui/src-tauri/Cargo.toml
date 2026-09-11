@@ -1,0 +1,29 @@
+[package]
+name = "flash-programmer-gui"
+version = "0.1.0"
+edition = "2021"
+authors = ["Flash Programmer GUI Team"]
+description = "Tauri v2 desktop GUI for embedded flash programming"
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "flash_programmer_gui_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-shell = "2"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+firmware-parser = { path = "../../../crates/firmware-parser" }
+flash-core = { path = "../../../crates/flash-core", features = ["mock-probe", "live-probe"] }
+tauri-plugin-single-instance = "2"
+
+[features]
+default = ["custom-protocol", "live-probe"]
+custom-protocol = ["tauri/custom-protocol"]
+live-probe = ["flash-core/live-probe"]
