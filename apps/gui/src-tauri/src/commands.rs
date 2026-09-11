@@ -175,6 +175,7 @@ fn format_to_string(format: &FirmwareFormat) -> String {
     match format {
         FirmwareFormat::IntelHex => "Intel HEX".to_string(),
         FirmwareFormat::RawBinary => "Raw Binary".to_string(),
+        FirmwareFormat::Elf => "ELF".to_string(),
     }
 }
 

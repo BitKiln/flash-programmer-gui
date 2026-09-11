@@ -36,6 +36,15 @@ pub trait FlashSession: Send {
         None
     }
 
+    /// Whether `program` already erases the flash it writes.
+    ///
+    /// Backends whose programming path performs its own erase (probe-rs's flash
+    /// loader does) return `true` so the manager skips the separate erase pass
+    /// instead of erasing the same sectors twice.
+    fn program_erases_target(&self) -> bool {
+        false
+    }
+
     /// Mass-erase the entire target flash memory.
     fn erase_all(&mut self, cb: Option<&dyn ProgressCallback>) -> Result<(), FlashError>;
 

@@ -30,7 +30,7 @@ export function FirmwarePanel() {
         filters: [
           {
             name: "Firmware Files",
-            extensions: ["hex", "ihex", "bin", "elf"],
+            extensions: ["hex", "ihex", "bin", "elf", "axf", "out"],
           },
           { name: "All Files", extensions: ["*"] },
         ],
@@ -188,7 +188,10 @@ export function FirmwarePanel() {
           />
           Reset after programming
         </label>
-        <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
+        <label
+          className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer"
+          title="Mass-erases every sector, including those the firmware does not use. Much slower than the default, which erases only the sectors being written."
+        >
           <input
             type="checkbox"
             checked={state.flashOptions.chipErase}
@@ -200,7 +203,7 @@ export function FirmwarePanel() {
             }
             className="accent-accent-red"
           />
-          Full chip erase
+          Full chip erase (slow)
         </label>
       </div>
 

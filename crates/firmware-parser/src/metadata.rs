@@ -8,6 +8,7 @@ use crate::error::ParseError;
 pub enum FirmwareFormat {
     IntelHex,
     RawBinary,
+    Elf,
 }
 
 /// Standardized integrity checksum summary.
@@ -31,6 +32,8 @@ pub enum EntryPointSource {
     Record03,
     /// Auto-detected via ARM Cortex-M Vector Table (offset 0x04, Reset_Handler).
     CortexMVectorTable,
+    /// Explicitly declared via the ELF header's `e_entry` field.
+    ElfHeader,
     /// No entry point detected.
     None,
 }
