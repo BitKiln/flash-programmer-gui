@@ -63,6 +63,7 @@ describe("AppContext", () => {
             type: "SET_TARGET_INFO",
             info: {
               name: "STM32F401RE",
+              display_name: null,
               architecture: "ARMv7-M",
               flash_base: 0x08000000,
               flash_size: 512 * 1024,

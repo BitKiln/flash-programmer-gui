@@ -20,7 +20,7 @@ export function App() {
       {/* Main Content */}
       <div className="flex-1 flex overflow-hidden">
         {/* Left Sidebar — Connection */}
-        <aside className="w-64 shrink-0 overflow-y-auto">
+        <aside className="w-64 shrink-0 overflow-hidden">
           <ConnectionPanel />
         </aside>
 

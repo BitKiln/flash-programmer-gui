@@ -191,8 +191,15 @@ impl FlashBackend for MockProbeBackend {
         };
 
         // Resolve target geometry
-        let target = get_target_by_name(&config.target_name)
-            .or_else(|| {
+        let target = if config.target_name.trim().is_empty()
+            || config.target_name.eq_ignore_ascii_case("auto")
+            || config.target_name.eq_ignore_ascii_case("default")
+        {
+            Some(crate::mock::profiles::stm32f401re())
+        } else {
+            get_target_by_name(&config.target_name)
+        }
+        .or_else(|| {
                 if let Some(ref pid) = config.probe_id {
                     get_target_by_name(pid)
                 } else {

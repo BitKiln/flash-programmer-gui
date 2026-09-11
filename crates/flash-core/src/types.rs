@@ -74,6 +74,11 @@ impl SectorInfo {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TargetInfo {
     pub name: String,
+    /// Human friendly chip/board label (e.g. "STM32H74x/75x"), when hardware
+    /// identification yields more detail than the registry part number.
+    /// `name` always stays a value that can be fed back into the target registry.
+    #[serde(default)]
+    pub display_name: Option<String>,
     pub architecture: String,
     pub flash_base: u32,
     pub flash_size: u32,
@@ -121,7 +126,7 @@ impl Default for ConnectionConfig {
     fn default() -> Self {
         Self {
             probe_id: None,
-            target_name: "stm32f401re".to_string(),
+            target_name: String::new(),
             protocol: WireProtocol::Swd,
             speed_khz: 4000,
             connect_under_reset: false,

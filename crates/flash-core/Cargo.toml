@@ -7,7 +7,7 @@ description = "Modular flash programming core and probe abstraction layer for em
 license = "MIT OR Apache-2.0"
 
 [features]
-default = ["mock-probe"]
+default = ["mock-probe", "live-probe"]
 mock-probe = []
 live-probe = ["dep:probe-rs"]
 
@@ -20,3 +20,6 @@ firmware-parser = { path = "../firmware-parser" }
 probe-rs = { version = "0.32", optional = true }
 
 [dev-dependencies]
+
+[target."cfg(windows)".dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem", "Win32_Foundation"] }

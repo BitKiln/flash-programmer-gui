@@ -21,10 +21,10 @@ serde_json = "1.0"
 toml = "0.8"
 directories = "5.0"
 firmware-parser = { path = "../firmware-parser" }
-flash-core = { path = "../flash-core", features = ["mock-probe"] }
+flash-core = { path = "../flash-core", features = ["mock-probe", "live-probe"] }
 
 [features]
-default = []
+default = ["live-probe"]
 live-probe = ["flash-core/live-probe"]
 
 [dev-dependencies]

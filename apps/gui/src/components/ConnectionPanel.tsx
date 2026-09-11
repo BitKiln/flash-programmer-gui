@@ -2,77 +2,287 @@ import { useEffect, useState } from "react";
 import { useAppContext } from "../state/AppContext";
 import { useFlashProgrammer } from "../hooks/useFlashProgrammer";
 
+const RECENT_TARGETS_KEY = "flashgui.recentTargets";
+const RECENT_LIMIT = 5;
+
+/** Reads the recently connected parts; storage may be unavailable or stale. */
+function loadRecentTargets(): string[] {
+  try {
+    const raw = window.localStorage.getItem(RECENT_TARGETS_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed)
+      ? parsed.filter((t): t is string => typeof t === "string").slice(0, RECENT_LIMIT)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveRecentTargets(targets: string[]) {
+  try {
+    window.localStorage.setItem(RECENT_TARGETS_KEY, JSON.stringify(targets));
+  } catch {
+    // Storage disabled - recents are a convenience, not state we depend on.
+  }
+}
+
 export function ConnectionPanel() {
   const { state, dispatch } = useAppContext();
-  const { refreshProbes, connectProbe } = useFlashProgrammer();
+  const { refreshProbes, connectProbe, disconnectProbe, autoDetectTarget } =
+    useFlashProgrammer();
 
-  const [target, setTarget] = useState("stm32f401re");
+  const [mode, setMode] = useState<"hardware" | "simulator">("hardware");
+  // Empty means "identify the chip on connect". Never guess a part number:
+  // a wrong one attaches happily and only misbehaves when erasing or writing.
+  const [target, setTarget] = useState("");
+  // Parts this user actually connected to, most recent first.
+  const [recentTargets, setRecentTargets] = useState<string[]>(loadRecentTargets);
   const [protocol, setProtocol] = useState("Swd");
   const [speed, setSpeed] = useState(4000);
+  const [isDetecting, setIsDetecting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const rememberTarget = (name: string) => {
+    setRecentTargets((previous) => {
+      const next = [name, ...previous.filter((t) => t !== name)].slice(0, RECENT_LIMIT);
+      saveRecentTargets(next);
+      return next;
+    });
+  };
 
   // Auto-refresh probes on mount
   useEffect(() => {
     refreshProbes();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const handleAutoDetect = async () => {
+    setIsDetecting(true);
+    setError(null);
+    try {
+      const { info, error: detectError } = await autoDetectTarget(
+        state.selectedProbe,
+        protocol,
+        speed
+      );
+      // info.name is always a registry chip name, so Connect can reuse it as-is.
+      if (info) {
+        setTarget(info.name);
+        rememberTarget(info.name);
+      }
+      setError(detectError);
+    } finally {
+      setIsDetecting(false);
+    }
+  };
+
+  const hardwareProbes = state.probes.filter(
+    (p) => !p.identifier.startsWith("mock:") && p.probe_type !== "VirtualMock"
+  );
+  const simulatorProbes = state.probes.filter(
+    (p) => p.identifier.startsWith("mock:") || p.probe_type === "VirtualMock"
+  );
+
+  const displayedProbes = mode === "hardware" ? hardwareProbes : simulatorProbes;
+
+  // Auto-select first probe when switching modes or when probes update
+  useEffect(() => {
+    if (displayedProbes.length > 0) {
+      const currentInList = displayedProbes.some(
+        (p) => p.identifier === state.selectedProbe
+      );
+      if (!currentInList) {
+        dispatch({
+          type: "SELECT_PROBE",
+          probeId: displayedProbes[0].identifier,
+        });
+      }
+    } else if (mode === "hardware") {
+      dispatch({ type: "SELECT_PROBE", probeId: null });
+    }
+  }, [mode, displayedProbes, state.selectedProbe, dispatch]);
+
   const handleConnect = async () => {
-    await connectProbe(state.selectedProbe, target, protocol, speed);
+    setError(null);
+    const failure = await connectProbe(state.selectedProbe, target, protocol, speed);
+    setError(failure);
+    if (!failure && target.trim()) {
+      rememberTarget(target.trim());
+    }
+  };
+
+  const handleDisconnect = async () => {
+    setError(await disconnectProbe());
   };
 
   const isConnected = state.connectionStatus === "connected";
   const isConnecting = state.connectionStatus === "connecting";
 
   return (
-    <div className="flex flex-col h-full p-4 space-y-4 bg-bg-secondary border-r border-gray-700">
-      <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider">
-        Connection
-      </h2>
+    <div className="flex flex-col h-full min-w-0 overflow-y-auto overflow-x-hidden p-4 space-y-4 bg-bg-secondary border-r border-gray-700">
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider">
+          Connection
+        </h2>
+        <span
+          className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
+            mode === "hardware"
+              ? "bg-green-950 text-green-400 border border-green-800"
+              : "bg-amber-950 text-amber-400 border border-amber-800"
+          }`}
+        >
+          {mode === "hardware" ? "PROBE-RS HARDWARE" : "SIMULATOR"}
+        </span>
+      </div>
+
+      {/* Mode Switcher: Hardware vs Simulator */}
+      <div className="grid grid-cols-2 gap-1 p-1 bg-bg-primary rounded border border-gray-700">
+        <button
+          type="button"
+          onClick={() => setMode("hardware")}
+          className={`py-1 text-xs font-semibold rounded transition-colors ${
+            mode === "hardware"
+              ? "bg-accent-red text-white shadow-sm"
+              : "text-gray-400 hover:text-gray-200"
+          }`}
+        >
+          ⚡ Hardware Probe
+        </button>
+        <button
+          type="button"
+          onClick={() => setMode("simulator")}
+          className={`py-1 text-xs font-semibold rounded transition-colors ${
+            mode === "simulator"
+              ? "bg-amber-600 text-white shadow-sm"
+              : "text-gray-400 hover:text-gray-200"
+          }`}
+        >
+          🧪 Virtual Simulator
+        </button>
+      </div>
 
       {/* Probe Selection */}
       <div>
-        <label className="block text-xs text-gray-400 mb-1">Debug Probe</label>
+        <label className="block text-xs text-gray-400 mb-1">
+          {mode === "hardware" ? "Physical Debug Probe" : "Virtual Probe Model"}
+        </label>
         <div className="flex gap-2">
           <select
-            className="flex-1 bg-bg-primary border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-accent-red focus:outline-none"
+            className="flex-1 min-w-0 truncate bg-bg-primary border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-accent-red focus:outline-none"
             value={state.selectedProbe ?? ""}
             onChange={(e) =>
-              dispatch({ type: "SELECT_PROBE", probeId: e.target.value || null })
+              dispatch({
+                type: "SELECT_PROBE",
+                probeId: e.target.value || null,
+              })
             }
           >
-            {state.probes.length === 0 && (
-              <option value="">No probes found</option>
+            {displayedProbes.length === 0 && (
+              <option value="">
+                {mode === "hardware"
+                  ? "No hardware probe detected"
+                  : "No simulation probes"}
+              </option>
             )}
-            {state.probes.map((p) => (
+            {displayedProbes.map((p) => (
               <option key={p.identifier} value={p.identifier}>
-                {p.product_name}
+                {mode === "hardware" ? `⚡ ${p.product_name}` : p.product_name}
               </option>
             ))}
           </select>
           <button
             onClick={refreshProbes}
-            className="px-2 py-1.5 bg-bg-tertiary border border-gray-600 rounded text-sm text-gray-300 hover:bg-gray-600 transition-colors"
-            title="Refresh probes"
+            className="shrink-0 px-2.5 py-1.5 bg-bg-tertiary border border-gray-600 rounded text-sm text-gray-300 hover:bg-gray-600 transition-colors"
+            title="Scan for connected debug probes"
           >
             ⟳
           </button>
         </div>
+
+        {mode === "hardware" && displayedProbes.length === 0 && (
+          <div className="mt-2.5 p-2.5 bg-bg-primary border border-amber-900/60 rounded text-xs space-y-1.5">
+            <div className="flex items-center gap-1.5 text-amber-400 font-medium">
+              <span>⚠</span> No physical probe detected
+            </div>
+            <p className="text-gray-300">
+              Connect an <strong>ST-Link (V2/V3)</strong>, <strong>CMSIS-DAP</strong>, <strong>Raspberry Pi PicoProbe</strong>, or <strong>J-Link</strong> via USB and click <strong>⟳</strong>.
+            </p>
+            <p className="text-gray-400">
+              Want to test without a board? Switch to{" "}
+              <button
+                type="button"
+                onClick={() => setMode("simulator")}
+                className="text-accent-red hover:underline font-medium"
+              >
+                Virtual Simulator
+              </button>
+              .
+            </p>
+          </div>
+        )}
+
         {state.selectedProbe && (
           <p className="text-xs text-gray-500 mt-1 font-mono truncate">
-            {state.selectedProbe}
+            ID: {state.selectedProbe}
           </p>
         )}
       </div>
 
       {/* Target MCU */}
       <div>
-        <label className="block text-xs text-gray-400 mb-1">Target MCU</label>
+        <div className="flex items-center justify-between mb-1">
+          <label className="block text-xs text-gray-400">Target MCU</label>
+          <button
+            type="button"
+            onClick={handleAutoDetect}
+            disabled={isDetecting || !state.selectedProbe}
+            className="text-xs text-accent-red hover:underline flex items-center gap-1 font-medium disabled:opacity-50 disabled:hover:no-underline transition-colors"
+            title="Auto-detect connected MCU chip via SWD/JTAG IDCODE"
+          >
+            {isDetecting ? "Detecting..." : "🔍 Auto-Detect"}
+          </button>
+        </div>
         <input
           type="text"
+          list="target-presets"
           className="w-full bg-bg-primary border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200 font-mono focus:border-accent-red focus:outline-none"
           value={target}
           onChange={(e) => setTarget(e.target.value)}
-          placeholder="e.g. STM32F401RE"
+          placeholder="empty = auto-detect"
         />
+        <datalist id="target-presets">
+          <option value="auto">auto (identify the connected chip)</option>
+          <option value="STM32U575ZITx">STM32U575ZITx (NUCLEO-U575ZI-Q, 2MB Flash)</option>
+          <option value="STM32U585AIIx">STM32U585AIIx (B-U585I-IOT02A, 2MB Flash)</option>
+          <option value="STM32H563ZITx">STM32H563ZITx (NUCLEO-H563ZI, 2MB Flash)</option>
+          <option value="STM32L476RG">STM32L476RG (NUCLEO-L476RG, 1MB Flash)</option>
+          <option value="STM32G474RE">STM32G474RE (NUCLEO-G474RE, 512KB Flash)</option>
+          <option value="STM32H753ZI">STM32H753ZI (NUCLEO-H753ZI, 2MB Flash)</option>
+          <option value="STM32H743ZI">STM32H743ZI (NUCLEO-H743ZI, 2MB Flash)</option>
+          <option value="STM32F401RE">STM32F401RE (NUCLEO-F401RE, 512KB Flash)</option>
+          <option value="STM32F411RE">STM32F411RE (NUCLEO-F411RE, 512KB Flash)</option>
+          <option value="STM32F407VG">STM32F407VG (STM32F4-Discovery, 1MB Flash)</option>
+          <option value="STM32F103C8">STM32F103C8 (BluePill, 64KB Flash)</option>
+          <option value="RP2040">RP2040 (Raspberry Pi Pico)</option>
+        </datalist>
+        {recentTargets.length > 0 && (
+          <div className="flex flex-wrap gap-1 mt-1.5">
+            {recentTargets.map((preset) => (
+              <button
+                key={preset}
+                type="button"
+                onClick={() => setTarget(preset)}
+                title="Recently connected target"
+                className={`text-[10px] px-1.5 py-0.5 rounded border transition-colors ${
+                  target === preset
+                    ? "bg-accent-red/20 text-accent-red border-accent-red/40 font-semibold"
+                    : "bg-bg-tertiary text-gray-400 border-gray-700 hover:text-gray-200 hover:border-gray-500"
+                }`}
+              >
+                {preset}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Protocol */}
@@ -119,23 +329,25 @@ export function ConnectionPanel() {
         </select>
       </div>
 
-      {/* Connect Button */}
+      {/* One button, two states: connecting holds the probe, disconnecting
+          releases it for other tools. */}
       <button
-        onClick={handleConnect}
-        disabled={isConnecting || !state.selectedProbe}
+        onClick={isConnected ? handleDisconnect : handleConnect}
+        disabled={isConnecting || (!isConnected && !state.selectedProbe)}
+        title={
+          isConnected
+            ? "Close the session and release the probe for other tools"
+            : "Open a session on the selected probe"
+        }
         className={`w-full py-2 rounded text-sm font-medium transition-colors ${
           isConnected
-            ? "bg-green-700 hover:bg-green-600 text-white"
+            ? "bg-bg-tertiary border border-gray-600 text-gray-200 hover:bg-gray-600"
             : isConnecting
               ? "bg-yellow-700 text-white cursor-wait"
               : "bg-accent-red hover:bg-red-500 text-white"
         } disabled:opacity-50 disabled:cursor-not-allowed`}
       >
-        {isConnecting
-          ? "Connecting..."
-          : isConnected
-            ? "Reconnect"
-            : "Connect"}
+        {isConnecting ? "Connecting..." : isConnected ? "Disconnect" : "Connect"}
       </button>
 
       {/* Status Indicator */}
@@ -160,6 +372,12 @@ export function ConnectionPanel() {
         </span>
       </div>
 
+      {error && (
+        <div className="p-2 bg-red-950/50 border border-red-800 rounded text-xs text-red-300 break-words">
+          {error}
+        </div>
+      )}
+
       {/* Target Info */}
       {state.targetInfo && (
         <div className="mt-auto pt-4 border-t border-gray-700 space-y-1">
@@ -170,6 +388,11 @@ export function ConnectionPanel() {
             <p>
               Arch: <span className="text-gray-100">{state.targetInfo.architecture}</span>
             </p>
+            {state.targetInfo.display_name && (
+              <p>
+                ID: <span className="text-gray-100">{state.targetInfo.display_name}</span>
+              </p>
+            )}
             <p>
               Flash: <span className="text-gray-100">0x{state.targetInfo.flash_base.toString(16).toUpperCase().padStart(8, "0")}</span>{" "}
               ({(state.targetInfo.flash_size / 1024).toFixed(0)} KB)

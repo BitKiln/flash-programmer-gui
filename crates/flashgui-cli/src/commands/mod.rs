@@ -39,7 +39,11 @@ pub fn get_backend(mock: bool) -> Box<dyn FlashBackend> {
 pub fn is_supported_target(target: &str, mock: bool) -> bool {
     if mock {
         let normalized = target.to_lowercase().replace(['-', '_'], "");
-        normalized.contains("f103")
+        // The mock backend resolves these to its default profile.
+        normalized.is_empty()
+            || normalized == "auto"
+            || normalized == "default"
+            || normalized.contains("f103")
             || normalized.contains("f401")
             || normalized.contains("f411")
             || normalized.contains("stm32")

@@ -14,6 +14,19 @@ pub trait FlashBackend: Send + Sync {
 
     /// Establish an active connection to target MCU via specified probe and configuration.
     fn open_session(&self, config: &ConnectionConfig) -> Result<Box<dyn FlashSession>, FlashError>;
+
+    /// Automatically discover target MCU without requiring prior manual chip selection.
+    fn detect_target(&self, config: &ConnectionConfig) -> Result<TargetInfo, FlashError> {
+        let mut auto_config = config.clone();
+        if auto_config.target_name.trim().is_empty() {
+            auto_config.target_name = "auto".to_string();
+        }
+        let session = self.open_session(&auto_config)?;
+        session
+            .target_info()
+            .cloned()
+            .ok_or_else(|| FlashError::ConnectError("Could not determine target info".to_string()))
+    }
 }
 
 /// Active connection session with an MCU target providing flash and memory control.

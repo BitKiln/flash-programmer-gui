@@ -95,7 +95,7 @@ pub struct FlashArgs {
     /// Firmware file path (.hex or .bin). Optional if provided by profile.
     pub file: Option<String>,
 
-    /// Target microcontroller name (e.g. STM32F401RE)
+    /// Target microcontroller name (e.g. STM32H753ZI); "auto" identifies the connected chip
     #[arg(short, long)]
     pub target: Option<String>,
 
@@ -142,8 +142,8 @@ pub struct FlashArgs {
 
 #[derive(Args, Debug, Clone)]
 pub struct EraseArgs {
-    /// Target microcontroller name (e.g. STM32F401RE)
-    #[arg(short, long, default_value = "STM32F401RE")]
+    /// Target microcontroller name (e.g. STM32H753ZI); "auto" identifies the connected chip
+    #[arg(short, long, default_value = "auto")]
     pub target: String,
 
     /// Specific probe serial number or ID
@@ -176,8 +176,8 @@ pub struct VerifyArgs {
     /// Firmware file path (.hex or .bin)
     pub file: String,
 
-    /// Target microcontroller name (e.g. STM32F401RE)
-    #[arg(short, long, default_value = "STM32F401RE")]
+    /// Target microcontroller name (e.g. STM32H753ZI); "auto" identifies the connected chip
+    #[arg(short, long, default_value = "auto")]
     pub target: String,
 
     /// Specific probe serial number or ID
@@ -199,8 +199,8 @@ pub struct VerifyArgs {
 
 #[derive(Args, Debug, Clone)]
 pub struct ResetArgs {
-    /// Target microcontroller name (e.g. STM32F401RE)
-    #[arg(short, long, default_value = "STM32F401RE")]
+    /// Target microcontroller name (e.g. STM32H753ZI); "auto" identifies the connected chip
+    #[arg(short, long, default_value = "auto")]
     pub target: String,
 
     /// Specific probe serial number or ID

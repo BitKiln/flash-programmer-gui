@@ -99,10 +99,24 @@ export function useFlashProgrammer() {
 
   const refreshProbes = useCallback(async () => {
     try {
-      addLog("info", "Scanning for debug probes...");
+      addLog("info", "Scanning USB ports for physical debug probes (probe-rs)...");
       const probes = await invoke<ProbeInfo[]>("list_probes");
       dispatch({ type: "SET_PROBES", probes });
-      addLog("success", `Found ${probes.length} probe(s)`);
+
+      const hardwareProbes = probes.filter(
+        (p) => !p.identifier.startsWith("mock:") && p.probe_type !== "VirtualMock"
+      );
+      if (hardwareProbes.length > 0) {
+        addLog(
+          "success",
+          `Detected ${hardwareProbes.length} physical hardware probe(s): ${hardwareProbes.map((p) => p.product_name).join(", ")}`
+        );
+      } else {
+        addLog(
+          "info",
+          "No physical USB debug probe detected. (Virtual simulation mode available)"
+        );
+      }
       if (probes.length > 0 && !state.selectedProbe) {
         dispatch({ type: "SELECT_PROBE", probeId: probes[0].identifier });
       }
@@ -119,7 +133,7 @@ export function useFlashProgrammer() {
       target: string,
       protocol: string,
       speed: number
-    ) => {
+    ): Promise<string | null> => {
       dispatch({ type: "SET_CONNECTION_STATUS", status: "connecting" });
       addLog("info", `Connecting to ${target} via ${protocol}...`);
 
@@ -136,9 +150,58 @@ export function useFlashProgrammer() {
           "success",
           `Connected to ${info.name} (${info.architecture}), Flash: ${(info.flash_size / 1024).toFixed(0)}KB`
         );
+        return null;
       } catch (err) {
         dispatch({ type: "SET_CONNECTION_STATUS", status: "error" });
-        addLog("error", `Connection failed: ${err}`);
+        const message = `${err}`;
+        addLog("error", `Connection failed: ${message}`);
+        return message;
+      }
+    },
+    [dispatch, addLog]
+  );
+
+  const disconnectProbe = useCallback(async () => {
+    try {
+      const message = await invoke<string>("disconnect_probe");
+      dispatch({ type: "SET_TARGET_INFO", info: null });
+      dispatch({ type: "SET_CONNECTION_STATUS", status: "disconnected" });
+      addLog("info", message);
+      return null;
+    } catch (err) {
+      const message = `${err}`;
+      addLog("error", `Disconnect failed: ${message}`);
+      return message;
+    }
+  }, [dispatch, addLog]);
+
+  const autoDetectTarget = useCallback(
+    async (
+      probeId: string | null,
+      protocol: string,
+      speed: number
+    ): Promise<{ info: TargetInfo | null; error: string | null }> => {
+      dispatch({ type: "SET_CONNECTION_STATUS", status: "connecting" });
+      addLog("info", `Auto-detecting connected MCU board via ${protocol}...`);
+
+      try {
+        const info = await invoke<TargetInfo>("auto_detect_target", {
+          probeId,
+          protocol,
+          speed,
+        });
+        dispatch({ type: "SET_TARGET_INFO", info });
+        dispatch({ type: "SET_CONNECTION_STATUS", status: "connected" });
+        addLog(
+          "success",
+          `Auto-detected board: ${info.display_name ? `${info.name} [${info.display_name}]` : info.name} (${info.architecture}), Flash: ${(info.flash_size / 1024).toFixed(0)}KB, RAM: ${(info.ram_size / 1024).toFixed(0)}KB`
+        );
+        return { info, error: null };
+      } catch (err) {
+        dispatch({ type: "SET_CONNECTION_STATUS", status: "error" });
+        const message = `${err}`;
+        addLog("error", `Auto-detection failed: ${message}`);
+        return { info: null, error: message };
       }
     },
     [dispatch, addLog]
@@ -314,6 +377,8 @@ export function useFlashProgrammer() {
   return {
     refreshProbes,
     connectProbe,
+    disconnectProbe,
+    autoDetectTarget,
     loadFirmware,
     flashFirmware,
     eraseChip,

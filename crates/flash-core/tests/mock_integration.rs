@@ -8,6 +8,31 @@ use flash_core::types::{ConnectionConfig, ProgramOptions, WireProtocol};
 use flash_core::{ClosureProgressCallback, FlashEvent, FlashManager, FlashStage};
 
 #[test]
+fn test_target_resolution_and_h7_profile() {
+    use flash_core::mock::profiles::{get_target_by_name, resolve_target_alias, stm32h753zi};
+
+    // Verify alias resolution for board names
+    assert_eq!(resolve_target_alias("nucleo-h753zi"), Some("STM32H753ZI"));
+    assert_eq!(resolve_target_alias("NUCLEO_H753ZI"), Some("STM32H753ZI"));
+    assert_eq!(resolve_target_alias("h753"), Some("STM32H753ZI"));
+    assert_eq!(resolve_target_alias("nucleo-f401re"), Some("STM32F401RE"));
+    assert_eq!(resolve_target_alias("bluepill"), Some("STM32F103C8"));
+    assert_eq!(resolve_target_alias("rp2040"), Some("RP2040"));
+
+    // Verify STM32H753ZI geometry (2 MB Flash, 1 MB RAM, 16x128 KB sectors)
+    let h7 = stm32h753zi();
+    assert_eq!(h7.name, "STM32H753ZI");
+    assert_eq!(h7.flash_size, 2 * 1024 * 1024);
+    assert_eq!(h7.ram_size, 1024 * 1024);
+    assert_eq!(h7.sectors.len(), 16);
+    assert_eq!(h7.sectors[0].size, 128 * 1024);
+
+    let retrieved = get_target_by_name("STM32H753ZI").expect("Should retrieve H7 profile");
+    assert_eq!(retrieved.flash_size, 2 * 1024 * 1024);
+}
+
+
+#[test]
 fn test_probe_listing_inventory() {
     let backend = MockProbeBackend::new();
     let probes = backend.list_probes().expect("Listing probes should succeed");
