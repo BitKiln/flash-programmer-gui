@@ -1,11 +1,13 @@
 pub mod bin;
 pub mod checksum;
+pub mod elf;
 pub mod error;
 pub mod hex;
 pub mod metadata;
 pub mod segment;
 
 pub use bin::{parse_bin, parse_bin_default, DEFAULT_FLASH_BASE_STM32};
+pub use elf::{is_elf, parse_elf, ELF_MAGIC};
 pub use checksum::{compute_canonical_checksums, compute_checksums, compute_padded_checksums};
 pub use error::ParseError;
 pub use hex::parse_hex;
@@ -29,7 +31,14 @@ pub fn detect_format(content: &[u8], path: Option<&Path>) -> FirmwareFormat {
             if ext_lower == "bin" {
                 return FirmwareFormat::RawBinary;
             }
+            if ext_lower == "elf" || ext_lower == "axf" || ext_lower == "out" {
+                return FirmwareFormat::Elf;
+            }
         }
+    }
+
+    if crate::elf::is_elf(content) {
+        return FirmwareFormat::Elf;
     }
 
     // Inspect first non-whitespace character
@@ -65,6 +74,7 @@ pub fn parse_bytes(
                 })?;
             parse_hex(hex_str)
         }
+        FirmwareFormat::Elf => parse_elf(bytes),
         FirmwareFormat::RawBinary => {
             let base = base_address.unwrap_or(DEFAULT_FLASH_BASE_STM32);
             parse_bin(bytes, base)
@@ -90,6 +100,7 @@ pub fn parse_file<P: AsRef<Path>>(
                 })?;
             parse_hex(text)?
         }
+        FirmwareFormat::Elf => parse_elf(&content)?,
         FirmwareFormat::RawBinary => {
             let base = base_address.unwrap_or(DEFAULT_FLASH_BASE_STM32);
             parse_bin(&content, base)?

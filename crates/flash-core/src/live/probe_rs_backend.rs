@@ -8,7 +8,7 @@ use probe_rs::probe::WireProtocol as RsWireProtocol;
 use probe_rs::{MemoryInterface, Permissions, Session};
 
 use crate::error::FlashError;
-use crate::progress::{FlashEvent, FlashStage, ProgressCallback};
+use crate::progress::{FlashEvent, FlashStage, ProgressCallback, ProgressMetrics};
 use crate::traits::{FlashBackend, FlashSession};
 use crate::types::{
     ConnectionConfig, ProbeInfo, ProbeType, ProgramOptions, TargetInfo, VerifyMismatch,
@@ -492,12 +492,26 @@ fn read_display_name(session: &mut Session) -> Option<String> {
     None
 }
 
+/// Bytes read per probe round-trip while verifying. Large enough to amortise
+/// the USB round-trip, small enough to keep progress reporting responsive.
+const VERIFY_CHUNK_BYTES: usize = 4096;
+
+/// Upper bound on individually reported mismatches; the CRC comparison still
+/// covers the whole image, so a wholly wrong region does not build a
+/// multi-megabyte report.
+const MAX_REPORTED_MISMATCHES: usize = 64;
+
 impl FlashSession for ProbeRsLiveSession {
     fn target_info(&self) -> Option<&TargetInfo> {
         self.target_info.as_ref()
     }
 
+    fn program_erases_target(&self) -> bool {
+        true
+    }
+
     fn erase_all(&mut self, cb: Option<&dyn ProgressCallback>) -> Result<(), FlashError> {
+        let start_time = Instant::now();
         if let Some(callback) = cb {
             callback.on_event(FlashEvent::StageStarted {
                 stage: FlashStage::Erasing,
@@ -526,7 +540,7 @@ impl FlashSession for ProbeRsLiveSession {
         if let Some(callback) = cb {
             callback.on_event(FlashEvent::StageCompleted {
                 stage: FlashStage::Erasing,
-                duration_ms: 0,
+                duration_ms: start_time.elapsed().as_millis() as u64,
             });
         }
 
@@ -539,6 +553,7 @@ impl FlashSession for ProbeRsLiveSession {
         length: u32,
         cb: Option<&dyn ProgressCallback>,
     ) -> Result<(), FlashError> {
+        let start_time = Instant::now();
         if let Some(callback) = cb {
             callback.on_event(FlashEvent::StageStarted {
                 stage: FlashStage::Erasing,
@@ -561,7 +576,7 @@ impl FlashSession for ProbeRsLiveSession {
         if let Some(callback) = cb {
             callback.on_event(FlashEvent::StageCompleted {
                 stage: FlashStage::Erasing,
-                duration_ms: 0,
+                duration_ms: start_time.elapsed().as_millis() as u64,
             });
         }
 
@@ -637,24 +652,49 @@ impl FlashSession for ProbeRsLiveSession {
             .core(0)
             .map_err(|e| FlashError::ProbeCommunication(e.to_string()))?;
 
+        let mut read_buf = vec![0u8; VERIFY_CHUNK_BYTES];
         for seg in segments {
-            let mut read_buf = vec![0u8; seg.data.len()];
-            core.read_8(seg.start_address as u64, &mut read_buf)
-                .map_err(|e| FlashError::ProbeCommunication(e.to_string()))?;
+            for (offset, expected_chunk) in seg.data.chunks(VERIFY_CHUNK_BYTES).enumerate() {
+                let chunk_start = seg
+                    .start_address
+                    .saturating_add((offset * VERIFY_CHUNK_BYTES) as u32);
+                let buf = &mut read_buf[..expected_chunk.len()];
 
-            for (i, &expected) in seg.data.iter().enumerate() {
-                let actual = read_buf[i];
-                let addr = seg.start_address.saturating_add(i as u32);
-                if expected != actual {
-                    mismatches.push(VerifyMismatch {
-                        address: addr,
-                        expected,
-                        actual,
-                    });
+                // `read` batches into 32-bit bus accesses where the alignment
+                // allows it; `read_8` issues byte-wide accesses and is several
+                // times slower over SWD.
+                core.read(chunk_start as u64, buf)
+                    .map_err(|e| FlashError::ProbeCommunication(e.to_string()))?;
+
+                for (i, (&expected, &actual)) in
+                    expected_chunk.iter().zip(buf.iter()).enumerate()
+                {
+                    if expected != actual && mismatches.len() < MAX_REPORTED_MISMATCHES {
+                        mismatches.push(VerifyMismatch {
+                            address: chunk_start.saturating_add(i as u32),
+                            expected,
+                            actual,
+                        });
+                    }
                 }
-                hasher_expected.update(&[expected]);
-                hasher_actual.update(&[actual]);
-                bytes_verified += 1;
+
+                hasher_expected.update(expected_chunk);
+                hasher_actual.update(buf);
+                bytes_verified = bytes_verified.saturating_add(expected_chunk.len() as u32);
+
+                if let Some(callback) = cb {
+                    if callback.is_cancelled() {
+                        return Err(FlashError::OperationCancelled);
+                    }
+                    callback.on_event(FlashEvent::Progress(ProgressMetrics::new(
+                        FlashStage::Verifying,
+                        bytes_verified as u64,
+                        total_bytes,
+                        start_time.elapsed().as_millis() as u64,
+                        chunk_start,
+                        "Verifying".to_string(),
+                    )));
+                }
             }
         }
 
@@ -685,7 +725,7 @@ impl FlashSession for ProbeRsLiveSession {
             .core(0)
             .map_err(|e| FlashError::ProbeCommunication(e.to_string()))?;
         let mut buf = vec![0u8; length as usize];
-        core.read_8(address as u64, &mut buf)
+        core.read(address as u64, &mut buf)
             .map_err(|e| FlashError::ProbeCommunication(e.to_string()))?;
         Ok(buf)
     }

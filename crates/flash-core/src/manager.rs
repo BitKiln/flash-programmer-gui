@@ -59,8 +59,11 @@ impl FlashManager {
             }
         }
 
-        // 2. Erase flash
-        if options.chip_erase {
+        // 2. Erase flash. Backends that erase as part of programming do it in
+        // step 3; erasing here as well would double every erase cycle.
+        if session.program_erases_target() {
+            // no-op: `program` below erases what it writes
+        } else if options.chip_erase {
             session.erase_all(cb)?;
         } else {
             for seg in &firmware.segments {

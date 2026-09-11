@@ -168,6 +168,8 @@ All fixtures reside in `tests/fixtures/` with deterministic contents and verifie
 | `valid_multi_sector_16kb.bin` | Raw Binary | 16,384 B | Exactly 1 STM32F4 Sector 0 (16 KB) payload. |
 | `corrupt_odd_reset_vector.bin` | Raw Binary | 1024 B | Reset handler has even address `0x080001CC` (Thumb bit 0). Rejected as invalid entry. |
 | `empty_file.bin` | Raw Binary | 0 B | Zero-byte binary file. Aborts with exit code 3. |
+| `valid_u575_blinky.elf` | ELF32 | 25,796 B file / 19,476 B image | Arm GCC output for STM32U575 (source: `tests/firmware/u575/`). Two `PT_LOAD` headers; `.data` has load address `0x08004C0C` in flash but virtual address `0x20000000` in RAM. Entry `0x08000040`. Non-loadable sections must be excluded. |
+| `valid_u575_blinky.bin` | Raw Binary | 19,476 B | `objcopy -O binary` of the ELF above. A correct ELF parse must reproduce it byte for byte. |
 | `valid_stm32f4_profile.toml` | TOML Profile| 280 B | Profile for STM32F401RE, SWD @ 2000 kHz, verify=true, reset=true. |
 | `valid_stm32f1_profile.toml` | TOML Profile| 280 B | Profile for STM32F103C8, SWD @ 1000 kHz, verify=true, reset=true. |
 | `invalid_malformed_profile.toml` | TOML Profile| 150 B | Syntax error in TOML. Aborts with exit code 5. |

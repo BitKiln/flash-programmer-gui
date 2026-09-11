@@ -8,6 +8,9 @@ pub enum ParseError {
     #[error("File is empty")]
     EmptyFile,
 
+    #[error("Invalid ELF file: {reason}")]
+    InvalidElf { reason: String },
+
     #[error("Line {line}: Missing mandatory leading colon prefix")]
     MissingLeadingColon { line: usize },
 
