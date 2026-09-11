@@ -81,7 +81,7 @@ The project is organized as a Cargo workspace with decoupled Rust crates and a m
 | M1 | Firmware Parser Crate | Implement `firmware-parser` (HEX/BIN, segments, checksums, entry points, unit tests) | none | DONE |
 | M2 | Flash Core & Probe Abstraction | Implement `flash-core` (traits, live probe-rs, virtual mock probe, fault injection, tests) | M1 (models) | DONE |
 | M3 | CLI Companion & Profiles | Implement `flashgui-cli` (commands, flags, profiles, headless mock CI tests) | M1, M2 | DONE |
-| M4 | Desktop Application GUI | Implement `src-tauri` IPC & React/TS frontend (panels, controls, console, Vitest) | M1, M2 | IN PROGRESS |
+| M4 | Desktop Application GUI | Implement `src-tauri` IPC & React/TS frontend (panels, controls, console, Vitest) | M1, M2 | DONE |
 | M5 | Final E2E Integration & Hardening | Phase 1: Pass 100% E2E test suite (Tiers 1-4); Phase 2: Tier 5 adversarial hardening | M1, M2, M3, M4, E2E | PLANNED |
 
 ## Parallel Dual-Track: E2E Testing Track
@@ -151,12 +151,12 @@ Implemented and registered in `apps/gui/src-tauri/src/lib.rs`:
 - `reset_target(halt)` -> `String`
 - `get_flash_events()` -> `Vec<FlashEventDto>`
 
-Progress telemetry is currently **polled**: the backend buffers `FlashEvent`s in `AppState` and the
-frontend drains them through `get_flash_events`. Pushed `flash:progress` / `flash:log` / `flash:status`
-events are planned, not implemented.
+Plus `cancel_operation`, `read_memory`, `read_firmware_window`, `save_memory_region`,
+`list_profiles`, `load_profile`, `save_profile` and `delete_profile`.
 
-Not yet implemented: `cancel_operation` (F40), `read_memory`, and the profile commands
-(`list_profiles` / `save_profile` / `load_profile`), which exist only in the CLI today.
+Progress telemetry is **pushed**: the backend emits `flash:progress`, `flash:status` and `flash:log`
+as an operation proceeds. `get_flash_events` remains as a drain for events buffered before the
+frontend established its subscription.
 
 ## Code Layout
 ```

@@ -209,3 +209,11 @@ export interface ProfileSummary {
   target: string;
   file_path: string;
 }
+
+// ── Memory viewer ────────────────────────────────────────────────────────────
+
+/** A block of target memory read back from the device. */
+export interface MemoryRead {
+  address: number;
+  bytes: number[];
+}

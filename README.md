@@ -178,8 +178,9 @@ Set `FLASHGUI_HW_PROBE` as well when more than one probe is attached.
 | `flash-core` — traits, probe-rs backend, mock backend, fault injection | Done |
 | `flashgui-cli` — devices, flash, erase, verify, reset, profiles | Done |
 | E2E suite — Tiers 1-4 (mock) and Tier 5 (hardware) | Done |
-| Desktop GUI — connection, firmware, controls, progress, console | In progress |
-| Cancellation, memory viewer, GUI profiles | Planned |
+| Desktop GUI — connection, firmware, controls, progress, console | Done |
+| Cancellation, pushed telemetry, segment inspector, GUI profiles | Done |
+| Memory viewer — hex view, firmware comparison, save region | Done |
 | Batch / production mode, serial-number programming | Planned |
 
 ## Licence

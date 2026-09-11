@@ -702,3 +702,104 @@ pub fn delete_profile(name: String) -> Result<String, String> {
         .map(|path| path.to_string_lossy().to_string())
         .map_err(|e| e.to_string())
 }
+
+// ── Memory viewer ────────────────────────────────────────────────────────────
+
+/// Largest region a single read may return.
+///
+/// Reading megabytes over SWD takes minutes and would serialise the whole IPC
+/// channel behind one request, so the viewer pages instead.
+const MAX_READ_BYTES: u32 = 64 * 1024;
+
+/// A block of target memory read back from the device.
+#[derive(Debug, Clone, Serialize)]
+pub struct MemoryReadDto {
+    pub address: u32,
+    pub bytes: Vec<u8>,
+}
+
+/// Reads `length` bytes of target memory starting at `address`.
+#[tauri::command]
+pub async fn read_memory(
+    state: State<'_, AppState>,
+    address: u32,
+    length: u32,
+) -> Result<MemoryReadDto, String> {
+    if length == 0 {
+        return Err("Length must be greater than zero".to_string());
+    }
+    if length > MAX_READ_BYTES {
+        return Err(format!(
+            "Read of {} bytes exceeds the {} byte limit; read in pages instead",
+            length, MAX_READ_BYTES
+        ));
+    }
+    if address.checked_add(length).is_none() {
+        return Err("Read range overflows the 32-bit address space".to_string());
+    }
+
+    let state = (*state).clone();
+    in_background(move || {
+        let mut session_guard = state.session.lock().map_err(|e| e.to_string())?;
+        let session = session_guard
+            .as_mut()
+            .ok_or_else(|| "No active session. Connect to a probe first.".to_string())?;
+
+        let bytes = session
+            .read_memory(address, length)
+            .map_err(|e| e.to_string())?;
+
+        Ok(MemoryReadDto { address, bytes })
+    })
+    .await
+}
+
+/// Returns the bytes a parsed firmware image places in `address..address+length`.
+///
+/// Used by the memory viewer to compare what is on the device against what the
+/// image says should be there. Addresses the image does not cover come back as
+/// `None`, so a gap is not confused with a byte that happens to be zero.
+#[tauri::command]
+pub fn read_firmware_window(
+    path: String,
+    base_address: Option<u32>,
+    address: u32,
+    length: u32,
+) -> Result<Vec<Option<u8>>, String> {
+    if length == 0 || length > MAX_READ_BYTES {
+        return Err(format!("Length must be between 1 and {}", MAX_READ_BYTES));
+    }
+    let image = firmware_parser::parse_file(&path, base_address).map_err(|e| e.to_string())?;
+
+    let mut window = vec![None; length as usize];
+    for segment in &image.segments {
+        let start = segment.start_address as u64;
+        let end = start + segment.data.len() as u64;
+        for (offset, slot) in window.iter_mut().enumerate() {
+            let at = address as u64 + offset as u64;
+            if at >= start && at < end {
+                *slot = Some(segment.data[(at - start) as usize]);
+            }
+        }
+    }
+    Ok(window)
+}
+
+/// Reads a region of target memory and writes it to `path` as a raw binary.
+#[tauri::command]
+pub async fn save_memory_region(
+    state: State<'_, AppState>,
+    path: String,
+    address: u32,
+    length: u32,
+) -> Result<String, String> {
+    let region = read_memory(state, address, length).await?;
+    std::fs::write(&path, &region.bytes)
+        .map_err(|e| format!("Failed to write '{}': {}", path, e))?;
+    Ok(format!(
+        "Saved {} bytes from {:#010X} to {}",
+        region.bytes.len(),
+        address,
+        path
+    ))
+}

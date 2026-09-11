@@ -11,6 +11,7 @@ import type {
   FlashEventDto,
   Profile,
   ProfileSummary,
+  MemoryRead,
 } from "../types";
 
 /**
@@ -282,6 +283,57 @@ export function useFlashProgrammer() {
     }
   }, [dispatch, addLog]);
 
+  // ── Memory ───────────────────────────────────────────────────────────────
+
+  const readMemory = useCallback(
+    async (address: number, length: number): Promise<MemoryRead | null> => {
+      try {
+        return await invoke<MemoryRead>("read_memory", { address, length });
+      } catch (err) {
+        addLog("error", `Memory read failed: ${err}`);
+        return null;
+      }
+    },
+    [addLog]
+  );
+
+  /// Bytes the loaded image places in a window, `null` where it covers nothing.
+  const readFirmwareWindow = useCallback(
+    async (address: number, length: number): Promise<(number | null)[] | null> => {
+      if (!state.firmwarePath) return null;
+      try {
+        return await invoke<(number | null)[]>("read_firmware_window", {
+          path: state.firmwarePath,
+          baseAddress: null,
+          address,
+          length,
+        });
+      } catch (err) {
+        addLog("error", `Firmware comparison failed: ${err}`);
+        return null;
+      }
+    },
+    [state.firmwarePath, addLog]
+  );
+
+  const saveMemoryRegion = useCallback(
+    async (path: string, address: number, length: number): Promise<boolean> => {
+      try {
+        const message = await invoke<string>("save_memory_region", {
+          path,
+          address,
+          length,
+        });
+        addLog("success", message);
+        return true;
+      } catch (err) {
+        addLog("error", `Failed to save region: ${err}`);
+        return false;
+      }
+    },
+    [addLog]
+  );
+
   // ── Profiles ─────────────────────────────────────────────────────────────
   //
   // Backed by the same TOML store the CLI uses, so a profile saved here works
@@ -492,6 +544,9 @@ export function useFlashProgrammer() {
     verifyFirmware,
     resetTarget,
     cancelOperation,
+    readMemory,
+    readFirmwareWindow,
+    saveMemoryRegion,
     listProfiles,
     loadProfile,
     saveProfile,
