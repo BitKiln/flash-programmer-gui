@@ -1,4 +1,5 @@
 pub mod batch;
+pub mod conformance;
 pub mod error;
 pub mod manager;
 pub mod profile;

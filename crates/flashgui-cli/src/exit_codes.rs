@@ -91,6 +91,9 @@ impl From<FlashError> for CliError {
                     CliError::FlashVerify(msg)
                 }
             }
+            // Asking a backend for something it cannot do is a usage error, not
+            // a flash failure.
+            FlashError::Unsupported(msg) => CliError::InvalidArgsOrProfile(msg),
             _ => CliError::FlashVerify(err.to_string()),
         }
     }
