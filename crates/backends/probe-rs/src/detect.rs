@@ -12,8 +12,8 @@ use probe_rs::config::{Registry, TargetSelector};
 use probe_rs::probe::DebugProbeInfo;
 use probe_rs::{MemoryInterface, Permissions, Session};
 
-use crate::error::FlashError;
-use crate::types::ConnectionConfig;
+use flash_core::error::FlashError;
+use flash_core::types::ConnectionConfig;
 
 /// Settle time after a failed attach; ST-Link V3 re-enumerates on Windows and a
 /// back-to-back open would otherwise fail (or make the probe vanish from the
@@ -159,7 +159,7 @@ fn open_probe(
     matched: &DebugProbeInfo,
     config: &ConnectionConfig,
 ) -> Result<probe_rs::probe::Probe, FlashError> {
-    super::probe_rs_backend::open_probe_internal(matched, config)
+    crate::backend::open_probe_internal(matched, config)
 }
 
 /// Attaches with the given selector, honouring connect-under-reset.

@@ -1,5 +1,5 @@
 use firmware_parser::MemorySegment;
-use flash_core::mock::{InjectedFault, MockProbeBackend};
+use flash_backend_mock::{InjectedFault, MockProbeBackend};
 use flash_core::traits::FlashBackend;
 use flash_core::types::{ConnectionConfig, ProgramOptions};
 use flash_core::{FlashError, FlashManager};

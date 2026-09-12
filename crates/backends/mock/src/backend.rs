@@ -2,13 +2,13 @@ use std::sync::{Arc, Mutex};
 
 use firmware_parser::MemorySegment;
 
-use crate::error::FlashError;
-use crate::mock::fault::{FaultInjector, InjectedFault};
-use crate::mock::memory::MockFlashMemory;
-use crate::mock::profiles::get_target_by_name;
-use crate::progress::{FlashEvent, FlashStage, ProgressCallback, ProgressMetrics};
-use crate::traits::{FlashBackend, FlashSession};
-use crate::types::{
+use flash_core::error::FlashError;
+use crate::fault::{FaultInjector, InjectedFault};
+use crate::memory::MockFlashMemory;
+use crate::profiles::get_target_by_name;
+use flash_core::progress::{FlashEvent, FlashStage, ProgressCallback, ProgressMetrics};
+use flash_core::traits::{FlashBackend, FlashSession};
+use flash_core::types::{
     ConnectionConfig, ProbeInfo, ProbeType, ProgramOptions, TargetInfo, VerifyMismatch,
     VerifyReport, WireProtocol,
 };
@@ -140,6 +140,10 @@ impl FlashBackend for MockProbeBackend {
         "mock-probe"
     }
 
+    fn scheme(&self) -> &'static str {
+        "mock"
+    }
+
     fn list_probes(&self) -> Result<Vec<ProbeInfo>, FlashError> {
         Ok(self.probes.clone())
     }
@@ -195,7 +199,7 @@ impl FlashBackend for MockProbeBackend {
             || config.target_name.eq_ignore_ascii_case("auto")
             || config.target_name.eq_ignore_ascii_case("default")
         {
-            Some(crate::mock::profiles::stm32f401re())
+            Some(crate::profiles::stm32f401re())
         } else {
             get_target_by_name(&config.target_name)
         }

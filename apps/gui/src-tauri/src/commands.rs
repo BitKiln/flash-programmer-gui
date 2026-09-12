@@ -8,7 +8,8 @@ use flash_core::batch::{
 };
 use flash_core::serial::{program_serial, SerialAllocator, SerialConfig, SerialEncoding};
 use flash_core::{
-    ConnectionConfig, FlashEvent, FlashManager, FlashStage, LogLevel, ProgramOptions, WireProtocol,
+    ConnectionConfig, FlashEvent, FlashManager, FlashStage, LogLevel, ProgramOptions, Transport,
+    WireProtocol,
 };
 
 use crate::state::AppState;
@@ -422,6 +423,7 @@ pub async fn connect_probe(
             speed_khz: speed,
             connect_under_reset: false,
             reset_type: None,
+            transport: Transport::DebugProbe,
         };
 
         let session = {
@@ -459,6 +461,7 @@ pub async fn auto_detect_target(
             speed_khz: speed,
             connect_under_reset: false,
             reset_type: None,
+            transport: Transport::DebugProbe,
         };
 
         let session = {
@@ -805,6 +808,7 @@ pub async fn start_batch(
                 speed_khz: speed,
                 connect_under_reset: false,
                 reset_type: None,
+                transport: Transport::DebugProbe,
             },
             options: ProgramOptions {
                 verify_after: verify,

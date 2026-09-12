@@ -1,6 +1,6 @@
 //! Serial-number rendering, encoding, and the write-plus-read-back path.
 
-use flash_core::mock::MockProbeBackend;
+use flash_backend_mock::MockProbeBackend;
 use flash_core::serial::{program_serial, SerialAllocator, SerialConfig, SerialEncoding};
 use flash_core::traits::FlashBackend;
 use flash_core::types::ConnectionConfig;

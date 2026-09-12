@@ -22,7 +22,7 @@ impl Default for AppState {
     fn default() -> Self {
         Self {
             session: Arc::new(Mutex::new(None)),
-            backend: Arc::new(Mutex::new(Box::new(flash_core::UnifiedBackend::new()))),
+            backend: Arc::new(Mutex::new(Box::new(flash_backends::default_registry()))),
             cancelled: Arc::new(AtomicBool::new(false)),
         }
     }

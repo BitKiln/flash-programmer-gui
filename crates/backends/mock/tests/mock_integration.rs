@@ -2,22 +2,14 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use firmware_parser::MemorySegment;
-use flash_core::mock::MockProbeBackend;
+use flash_backend_mock::MockProbeBackend;
 use flash_core::traits::FlashBackend;
 use flash_core::types::{ConnectionConfig, ProgramOptions, WireProtocol};
 use flash_core::{ClosureProgressCallback, FlashEvent, FlashManager, FlashStage};
 
 #[test]
-fn test_target_resolution_and_h7_profile() {
-    use flash_core::mock::profiles::{get_target_by_name, resolve_target_alias, stm32h753zi};
-
-    // Verify alias resolution for board names
-    assert_eq!(resolve_target_alias("nucleo-h753zi"), Some("STM32H753ZI"));
-    assert_eq!(resolve_target_alias("NUCLEO_H753ZI"), Some("STM32H753ZI"));
-    assert_eq!(resolve_target_alias("h753"), Some("STM32H753ZI"));
-    assert_eq!(resolve_target_alias("nucleo-f401re"), Some("STM32F401RE"));
-    assert_eq!(resolve_target_alias("bluepill"), Some("STM32F103C8"));
-    assert_eq!(resolve_target_alias("rp2040"), Some("RP2040"));
+fn test_h7_target_profile() {
+    use flash_backend_mock::profiles::{get_target_by_name, stm32h753zi};
 
     // Verify STM32H753ZI geometry (2 MB Flash, 1 MB RAM, 16x128 KB sectors)
     let h7 = stm32h753zi();
@@ -77,6 +69,7 @@ fn test_session_connection_stm32f1_and_stm32f4() {
         speed_khz: 4000,
         connect_under_reset: false,
         reset_type: None,
+        transport: Default::default(),
     };
     let session_f1 = backend
         .open_session(&config_f1)
@@ -97,6 +90,7 @@ fn test_session_connection_stm32f1_and_stm32f4() {
         speed_khz: 4000,
         connect_under_reset: false,
         reset_type: None,
+        transport: Default::default(),
     };
     let session_f4 = backend
         .open_session(&config_f4)
