@@ -35,6 +35,8 @@ pub fn run() {
             commands::reset_target,
             commands::cancel_operation,
             commands::read_memory,
+            commands::write_memory,
+            commands::can_write_memory,
             commands::read_firmware_window,
             commands::save_memory_region,
             commands::list_target_suggestions,

@@ -359,6 +359,34 @@ export function useFlashProgrammer() {
     [addLog]
   );
 
+  /// Writes bytes straight onto the target bus: RAM, registers, option bytes.
+  ///
+  /// Not a flash path. Nothing is erased first, so the backend refuses an
+  /// address inside flash rather than leaving a half-written sector.
+  const writeMemory = useCallback(
+    async (address: number, bytes: number[]): Promise<boolean> => {
+      try {
+        const message = await invoke<string>("write_memory", { address, bytes });
+        addLog("success", message);
+        return true;
+      } catch (err) {
+        addLog("error", `Memory write failed: ${err}`);
+        return false;
+      }
+    },
+    [addLog]
+  );
+
+  /// Whether the connected session can write memory at all. Asked before the
+  /// editor is offered, so nobody types a value whose write would be refused.
+  const canWriteMemory = useCallback(async (): Promise<boolean> => {
+    try {
+      return await invoke<boolean>("can_write_memory");
+    } catch {
+      return false;
+    }
+  }, []);
+
   /// Bytes the loaded image places in a window, `null` where it covers nothing.
   const readFirmwareWindow = useCallback(
     async (address: number, length: number): Promise<(number | null)[] | null> => {
@@ -672,6 +700,8 @@ export function useFlashProgrammer() {
     resetTarget,
     cancelOperation,
     readMemory,
+    writeMemory,
+    canWriteMemory,
     readFirmwareWindow,
     saveMemoryRegion,
     listTargetSuggestions,

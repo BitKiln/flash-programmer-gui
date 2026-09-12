@@ -1126,6 +1126,71 @@ pub async fn read_memory(
     .await
 }
 
+/// Largest region a single memory write may carry.
+///
+/// A direct memory write is for registers and small configuration fields, not
+/// for images: anything image-sized belongs on the flash path, which erases
+/// and verifies.
+const MAX_WRITE_BYTES: usize = 4 * 1024;
+
+/// Whether the connected session can write target memory directly.
+///
+/// The editor is offered only when the answer is yes, so nobody types a value
+/// into a field whose write would be refused.
+#[tauri::command]
+pub fn can_write_memory(state: State<'_, AppState>) -> Result<bool, String> {
+    let session = state.session.lock().map_err(|e| e.to_string())?;
+    Ok(session.as_ref().is_some_and(|s| s.can_write_memory()))
+}
+
+/// Writes `bytes` to target memory at `address`.
+///
+/// This is the bus, not the flash controller. The backend refuses an address
+/// inside flash, because nothing here erases first.
+#[tauri::command]
+pub async fn write_memory(
+    state: State<'_, AppState>,
+    address: u32,
+    bytes: Vec<u8>,
+) -> Result<String, String> {
+    if bytes.is_empty() {
+        return Err("Nothing to write".to_string());
+    }
+    if bytes.len() > MAX_WRITE_BYTES {
+        return Err(format!(
+            "Write of {} bytes exceeds the {} byte limit for a direct memory write; \
+             program an image of this size instead, so it is erased and verified",
+            bytes.len(),
+            MAX_WRITE_BYTES
+        ));
+    }
+    if address.checked_add(bytes.len() as u32).is_none() {
+        return Err("Write range overflows the 32-bit address space".to_string());
+    }
+
+    let count = bytes.len();
+    let state = (*state).clone();
+    in_background(move || {
+        let mut session_guard = state.session.lock().map_err(|e| e.to_string())?;
+        let session = session_guard
+            .as_mut()
+            .ok_or_else(|| "No active session. Connect to a probe first.".to_string())?;
+
+        if !session.can_write_memory() {
+            return Err("This connection cannot write target memory directly: it reaches \
+                        the flash controller only. A debug probe is needed for RAM, \
+                        registers and option bytes."
+                .to_string());
+        }
+
+        session
+            .write_memory(address, &bytes)
+            .map_err(|e| e.to_string())?;
+        Ok(format!("Wrote {count} bytes to {address:#010X}"))
+    })
+    .await
+}
+
 /// Returns the bytes a parsed firmware image places in `address..address+length`.
 ///
 /// Used by the memory viewer to compare what is on the device against what the
