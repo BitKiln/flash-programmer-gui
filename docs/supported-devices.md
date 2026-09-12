@@ -49,3 +49,13 @@ this table names. A part missing from this list is usually still programmable
 | `probe:` | probe-rs | ST-Link, CMSIS-DAP/DAPLink, and J-Link probes over SWD or JTAG |
 | `esp:` | esp-serial | Espressif parts over the serial/USB ROM bootloader — no probe needed |
 | `mock:` | simulated | Nothing physical — a NOR flash model for tests and demos |
+
+## Notes
+
+Espressif parts are listed against `probe:` as well as `esp:`, but probe-rs ships **no**
+ESP chip descriptions, so the JTAG route needs one supplied at runtime with
+`--target-yaml <path>` (from `probe-rs target-gen`, or esp-rs/esp-flash-loader). None is
+bundled with this tool. The serial bootloader route needs nothing extra and is the
+supported path.
+
+Silicon Labs support has not yet been exercised on hardware.

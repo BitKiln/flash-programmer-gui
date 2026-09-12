@@ -3,8 +3,9 @@
 A cross-platform desktop application and CLI for erasing, programming, verifying, and inspecting
 microcontroller flash — without memorising a different vendor tool for every chip on your desk.
 
-It is a clean frontend over [probe-rs](https://probe.rs), so it works with the probes you already
-own (ST-Link, CMSIS-DAP/DAPLink, J-Link) and any target probe-rs has a definition for. The same
+It works with the probes you already
+own (ST-Link, CMSIS-DAP/DAPLink, J-Link) over SWD or JTAG, and with ESP32 boards over their
+serial ROM bootloader with no probe at all. The same
 engine is exposed twice: as a GUI for day-to-day bring-up, and as a headless CLI for CI and
 automated firmware testing.
 
@@ -136,6 +137,36 @@ Command-line flags still override the profile. Profiles are TOML files resolved 
 `./.flashgui/profiles/` first, then your user config directory; `--profile-file <path>` points at
 one directly.
 
+### ESP32 over the serial bootloader
+
+An ESP board needs no debug probe — just the USB cable it is already plugged in with. Put it
+in download mode (hold **BOOT** while tapping **RESET**, if it does not enter by itself) and
+point at the port:
+
+```bash
+flashgui-cli flash build/app.bin --port COM7 --base-address 0x10000 --verify
+```
+
+`--port COM7` is shorthand for `--probe esp:COM7`; `/dev/ttyUSB0` and `/dev/cu.usbserial-*` work
+the same way. `--baud` sets the rate (default 460800). `devices` lists serial ports alongside
+debug probes.
+
+**Addresses are flash offsets, not the memory-mapped view.** On an ESP part the CPU sees flash
+at 0x3C00_0000 and friends, but everything written over the bootloader is addressed from 0. An
+ESP-IDF application image normally goes at `0x10000`, the bootloader at `0x0` or `0x1000`, and
+the partition table at `0x8000`. Passing the memory-mapped address instead is the single most
+common way to get this wrong.
+
+A full chip erase runs to completion inside one bootloader command, so it **cannot be
+interrupted**; programming and verification are chunked and can. Verification uses the chip's
+own MD5 rather than reading a multi-megabyte image back over the UART, and only reads bytes back
+when a digest disagrees, to report where.
+
+Reaching an ESP over JTAG instead is possible but needs a chip description: probe-rs ships none
+for Espressif. Supply one with `--target-yaml <path>`, from `probe-rs target-gen` or
+[esp-rs/esp-flash-loader](https://github.com/esp-rs/esp-flash-loader). None is bundled here —
+see [docs/supported-devices.md](docs/supported-devices.md).
+
 ### Batch (production) mode
 
 Program a run of boards without restarting the tool. `batch` takes every flag `flash` takes, plus
@@ -242,7 +273,8 @@ Set `FLASHGUI_HW_PROBE` as well when more than one probe is attached.
 | Batch mode in the desktop application — Batch tab, live unit table, log file | Done |
 | Serial-number programming — CLI flags, batch integration, desktop Batch tab | Done |
 | Silicon Labs EFR32/EFM32 — through probe-rs and J-Link | Untested on hardware |
-| ESP32 over the serial ROM bootloader | Planned (v0.3) |
+| ESP32 over the serial ROM bootloader — `esp:` backend, CLI and desktop | Untested on hardware |
+| Runtime chip descriptions (`--target-yaml`) for parts probe-rs lacks | Done |
 | OpenOCD backend | Planned (v0.5) |
 
 ## Licence

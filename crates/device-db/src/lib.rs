@@ -283,6 +283,23 @@ pub fn render_supported_devices() -> String {
     );
     out.push_str("| `mock:` | simulated | Nothing physical — a NOR flash model for tests and demos |
 ");
+
+    for line in [
+        "",
+        "## Notes",
+        "",
+        "Espressif parts are listed against `probe:` as well as `esp:`, but probe-rs ships **no**",
+        "ESP chip descriptions, so the JTAG route needs one supplied at runtime with",
+        "`--target-yaml <path>` (from `probe-rs target-gen`, or esp-rs/esp-flash-loader). None is",
+        "bundled with this tool. The serial bootloader route needs nothing extra and is the",
+        "supported path.",
+        "",
+        "Silicon Labs support has not yet been exercised on hardware.",
+    ] {
+        out.push_str(line);
+        out.push('\n');
+    }
+
     out
 }
 
