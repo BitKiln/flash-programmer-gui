@@ -1516,6 +1516,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "flash-backend-openocd"
+version = "0.1.0"
+dependencies = [
+ "crc32fast",
+ "firmware-parser",
+ "flash-core",
+ "tempfile",
+]
+
+[[package]]
 name = "flash-backend-probe-rs"
 version = "0.1.0"
 dependencies = [
