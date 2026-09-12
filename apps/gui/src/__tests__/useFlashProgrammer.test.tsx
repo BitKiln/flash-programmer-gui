@@ -275,3 +275,77 @@ describe("raw binary base address", () => {
     );
   });
 });
+
+/** Connected to a part whose flash is addressed from 0, as an ESP is. */
+function EspTargetHarness({
+  onReady,
+}: {
+  onReady: (api: ReturnType<typeof useFlashProgrammer>) => void;
+}) {
+  const { state, dispatch } = useAppContext();
+  const api = useFlashProgrammer();
+
+  useEffect(() => {
+    dispatch({
+      type: "SET_TARGET_INFO",
+      info: {
+        name: "esp32",
+        display_name: null,
+        architecture: "Xtensa LX",
+        flash_base: 0,
+        flash_size: 4 * 1024 * 1024,
+        ram_base: 0,
+        ram_size: 0,
+        page_size: 4096,
+        sector_count: 1024,
+        cancellable_stages: ["verifying"],
+      },
+    });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    onReady(api);
+  }, [api, onReady]);
+
+  return <span data-testid="logs">{state.logs.map((l) => l.message).join("|")}</span>;
+}
+
+describe("raw binary without an address", () => {
+  beforeEach(() => {
+    invoke.mockReset();
+    subscriptions.length = 0;
+  });
+
+  it("says so when a raw binary is placed by default on an ESP part", async () => {
+    // Every plausible ESP offset is a valid address, so a wrong guess flashes
+    // cleanly and boots to nothing. Silence is the dangerous outcome here.
+    let api: ReturnType<typeof useFlashProgrammer> | undefined;
+    render(
+      <AppProvider>
+        <EspTargetHarness onReady={(ready) => (api = ready)} />
+      </AppProvider>
+    );
+    await waitFor(() => expect(api).toBeDefined());
+
+    invoke.mockResolvedValue({
+      format: "Raw Binary",
+      file_path: "/build/mp_esp32.bin",
+      file_size_bytes: 1790544,
+      total_firmware_bytes: 1790544,
+      base_address: 0,
+      highest_address: 0x1b5250,
+      segment_count: 1,
+      entry_point: null,
+      entry_point_source: "not declared",
+      crc32: 0,
+      segments: [],
+      gaps: [],
+    });
+
+    await api!.loadFirmware("/build/mp_esp32.bin");
+
+    await waitFor(() =>
+      expect(screen.getByTestId("logs").textContent).toContain("0x1000")
+    );
+  });
+});

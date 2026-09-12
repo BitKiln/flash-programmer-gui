@@ -275,11 +275,30 @@ export function useFlashProgrammer() {
           "success",
           `Loaded ${info.format} firmware: ${info.total_firmware_bytes} bytes, ${info.segment_count} segment(s)`
         );
+
+        // A raw binary has no address of its own, so one was assumed. On an
+        // ESP part every plausible offset is a valid address, which means a
+        // wrong guess flashes cleanly and boots to nothing -- worth saying out
+        // loud, since the alternative is a silent success.
+        if (
+          baseAddress === undefined &&
+          info.format.toLowerCase().includes("raw") &&
+          state.targetInfo?.flash_base === 0
+        ) {
+          addLog(
+            "warn",
+            `No address given for a raw binary, so it will be written at ` +
+              `0x${info.base_address.toString(16).toUpperCase()}. On an ESP part a ` +
+              `bootloader or combined image usually goes at 0x1000, an ESP-IDF ` +
+              `application at 0x10000, and a merged Arduino export at 0x0. Set the ` +
+              `base address above if that is not the one you want.`
+          );
+        }
       } catch (err) {
         addLog("error", `Failed to load firmware: ${err}`);
       }
     },
-    [dispatch, addLog]
+    [dispatch, addLog, state.targetInfo]
   );
 
   // ── Cancellation ─────────────────────────────────────────────────────────

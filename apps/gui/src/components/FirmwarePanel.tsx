@@ -181,6 +181,16 @@ export function FirmwarePanel() {
             <p className="text-xs text-gray-500">
               A .bin has no addresses of its own, so this one is assumed. It
               defaults to the connected target&apos;s flash base.
+              {state.targetInfo?.flash_base === 0 && (
+                <>
+                  {" "}
+                  On an ESP part: <span className="font-mono">0x1000</span>{" "}
+                  bootloader or combined image,{" "}
+                  <span className="font-mono">0x10000</span> ESP-IDF
+                  application, <span className="font-mono">0x0</span> merged
+                  Arduino export.
+                </>
+              )}
             </p>
           )}
         </div>
