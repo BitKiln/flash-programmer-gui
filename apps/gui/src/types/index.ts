@@ -217,3 +217,53 @@ export interface MemoryRead {
   address: number;
   bytes: number[];
 }
+
+// ── Batch (production) mode ──────────────────────────────────────────────────
+
+/** One board of a batch run. */
+export interface BatchUnit {
+  index: number;
+  status: "passed" | "failed";
+  target: string | null;
+  bytes_flashed: number;
+  verified: boolean;
+  duration_ms: number;
+  started_unix_ms: number;
+  message: string;
+}
+
+export interface BatchReport {
+  units: BatchUnit[];
+  passed: number;
+  failed: number;
+  duration_ms: number;
+  stop_reason: string;
+  log_path: string | null;
+}
+
+/** Batch progress pushed on the `batch:event` channel. */
+export type BatchEventDto =
+  | { type: "WaitingForDetach"; index: number }
+  | { type: "WaitingForAttach"; index: number }
+  | { type: "UnitStarted"; index: number }
+  | { type: "UnitFinished"; unit: BatchUnit }
+  | { type: "Finished"; passed: number; failed: number; stop_reason: string };
+
+/** What the Batch panel sends to `start_batch`. */
+export interface BatchOptions {
+  path: string;
+  baseAddress: number | null;
+  probeId: string | null;
+  target: string;
+  protocol: string;
+  speed: number;
+  verify: boolean;
+  reset: boolean;
+  chipErase: boolean;
+  count: number | null;
+  rearm: "detach" | "immediate";
+  stopOnError: boolean;
+  delayMs: number;
+  logPath: string | null;
+  logJson: boolean;
+}

@@ -29,6 +29,7 @@ pub fn run() {
             commands::auto_detect_target,
             commands::load_firmware,
             commands::flash_firmware,
+            commands::start_batch,
             commands::erase_chip,
             commands::verify_firmware,
             commands::reset_target,

@@ -12,6 +12,8 @@ import type {
   Profile,
   ProfileSummary,
   MemoryRead,
+  BatchOptions,
+  BatchReport,
 } from "../types";
 
 /**
@@ -514,6 +516,58 @@ export function useFlashProgrammer() {
     reportFailure,
   ]);
 
+  // ── Batch (production) mode ──────────────────────────────────────────────
+
+  /// Programs a run of boards. The backend owns the probe for the whole run, so
+  /// the interactive session is dropped and the caller reconnects afterwards.
+  const startBatch = useCallback(
+    async (options: BatchOptions): Promise<BatchReport | null> => {
+      dispatch({ type: "SET_FLASH_STATUS", status: "programming" });
+      dispatch({ type: "RESET_PROGRESS" });
+      addLog("info", "Starting batch run...");
+
+      try {
+        const report = await invoke<BatchReport>("start_batch", {
+          path: options.path,
+          baseAddress: options.baseAddress,
+          probeId: options.probeId,
+          target: options.target,
+          protocol: options.protocol,
+          speed: options.speed,
+          verify: options.verify,
+          reset: options.reset,
+          chipErase: options.chipErase,
+          count: options.count,
+          rearm: options.rearm,
+          stopOnError: options.stopOnError,
+          delayMs: options.delayMs,
+          logPath: options.logPath,
+          logJson: options.logJson,
+        });
+
+        dispatch({ type: "SET_CONNECTION_STATUS", status: "disconnected" });
+        dispatch({ type: "SET_FLASH_STATUS", status: report.failed > 0 ? "error" : "completed" });
+        addLog(
+          report.failed > 0 ? "warn" : "success",
+          `Batch finished: ${report.passed} passed, ${report.failed} failed (${report.stop_reason})`
+        );
+        if (report.log_path) {
+          addLog("info", `Batch log written to ${report.log_path}`);
+        }
+        setTimeout(() => {
+          dispatch({ type: "SET_FLASH_STATUS", status: "idle" });
+        }, 3000);
+        return report;
+      } catch (err) {
+        reportFailure(err, "Batch failed");
+        return null;
+      } finally {
+        await drainBufferedEvents();
+      }
+    },
+    [dispatch, addLog, drainBufferedEvents, reportFailure]
+  );
+
   // ── Reset ────────────────────────────────────────────────────────────────
 
   const resetTarget = useCallback(
@@ -540,6 +594,7 @@ export function useFlashProgrammer() {
     autoDetectTarget,
     loadFirmware,
     flashFirmware,
+    startBatch,
     eraseChip,
     verifyFirmware,
     resetTarget,

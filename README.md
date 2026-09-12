@@ -143,6 +143,11 @@ Failures are logged and the run continues; `--stop-on-error` ends it at the firs
 `--log` writes one CSV row per board (index, pass/fail, target, bytes, duration, message), or JSON
 with `--log-json`. The exit code is 1 if any board failed.
 
+The desktop application exposes the same run under its **Batch** tab: the unit table fills in as
+boards are programmed, the prompts say which board to unplug or connect, and Stop ends the run.
+A batch owns the probe for its whole duration, so the interactive session is dropped when one
+starts and you reconnect afterwards.
+
 ### CI and scripting
 
 `--json` turns every status, progress, and completion message into NDJSON on stdout, and the exit
@@ -197,7 +202,7 @@ Set `FLASHGUI_HW_PROBE` as well when more than one probe is attached.
 | Cancellation, pushed telemetry, segment inspector, GUI profiles | Done |
 | Memory viewer — hex view, firmware comparison, save region | Done |
 | Batch / production mode — `flash-core` runner and `batch` CLI command | Done |
-| Batch mode in the desktop application | Planned |
+| Batch mode in the desktop application — Batch tab, live unit table, log file | Done |
 | Serial-number programming | Planned |
 
 ## Licence

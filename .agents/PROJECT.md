@@ -74,6 +74,7 @@ The project is organized as a Cargo workspace with decoupled Rust crates and a m
 | F40 | Desktop Cooperative Cancellation | Cancel ongoing flash operations cleanly via cancellation token | M4 | explorer_survey_3 |
 | F41 | Comprehensive E2E Test Suite | Opaque-box E2E suite in `crates/e2e-tests` driving the shipped CLI binary (Tiers 1-4 mock, Tier 5 hardware-gated) | E2E | Top-Level |
 | F43 | Batch / Production Mode | `flash-core::batch` runner plus the `batch` CLI command: repeat units, detach/attach re-arm, per-unit pass/fail log (CSV or JSON), continue-or-stop on failure | M3 | Top-Level |
+| F44 | Desktop Batch Mode | Batch tab driving `start_batch`, live per-unit table, `batch:event` telemetry, production log file | M4 | Top-Level |
 | F42 | Adversarial Hardening (Tier 5) | White-box adversarial test suite attacking edge cases and stress limits | M5 | Top-Level |
 
 ## Milestones
