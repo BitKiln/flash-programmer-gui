@@ -148,6 +148,15 @@ boards are programmed, the prompts say which board to unplug or connect, and Sto
 A batch owns the probe for its whole duration, so the interactive session is dropped when one
 starts and you reconnect afterwards.
 
+### Cancelling an operation
+
+Cancellation is cooperative: a backend can only act on it where it polls between
+units of work. The mock backend polls throughout erase, programming, and verification.
+`probe-rs` runs a chip erase and a flash download to completion inside one driver call, so on
+real hardware only the verify pass can stop early. The desktop app asks the session which stages
+it can abort and offers Stop for those alone — during the others it says the stage cannot be
+interrupted rather than showing a button that would do nothing.
+
 ### Serial numbers
 
 Both `flash` and `batch` can stamp a unique value into each board once the image

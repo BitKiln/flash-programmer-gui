@@ -38,6 +38,10 @@ pub struct TargetInfoDto {
     pub ram_size: u32,
     pub page_size: u32,
     pub sector_count: usize,
+    /// Stages a cancellation request can actually stop part way through.
+    /// A backend that hands a whole stage to its driver in one call cannot
+    /// be interrupted, and the UI must not offer a Stop that would do nothing.
+    pub cancellable_stages: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -305,8 +309,25 @@ fn format_to_string(format: &FirmwareFormat) -> String {
     }
 }
 
+/// Stages the session can abort part way through, named as the frontend
+/// spells them.
+fn cancellable_stages(session: &dyn flash_core::traits::FlashSession) -> Vec<String> {
+    [
+        FlashStage::Erasing,
+        FlashStage::Programming,
+        FlashStage::Verifying,
+    ]
+    .into_iter()
+    .filter(|stage| session.can_interrupt(*stage))
+    .map(|stage| stage_to_string(&stage))
+    .collect()
+}
+
 /// Maps core target metadata to the frontend DTO.
-fn target_info_dto(info: &flash_core::types::TargetInfo) -> TargetInfoDto {
+fn target_info_dto(
+    info: &flash_core::types::TargetInfo,
+    cancellable: Vec<String>,
+) -> TargetInfoDto {
     TargetInfoDto {
         name: info.name.clone(),
         display_name: info.display_name.clone(),
@@ -317,6 +338,7 @@ fn target_info_dto(info: &flash_core::types::TargetInfo) -> TargetInfoDto {
         ram_size: info.ram_size,
         page_size: info.page_size,
         sector_count: info.sectors.len(),
+        cancellable_stages: cancellable,
     }
 }
 
@@ -409,10 +431,11 @@ pub async fn connect_probe(
         };
 
         let target_info = session.target_info().cloned();
+        let cancellable = cancellable_stages(session.as_ref());
         *state.session.lock().map_err(|e| e.to_string())? = Some(session);
 
         match target_info {
-            Some(info) => Ok(target_info_dto(&info)),
+            Some(info) => Ok(target_info_dto(&info, cancellable)),
             None => Err("Connected but target info not available".to_string()),
         }
     })
@@ -447,9 +470,10 @@ pub async fn auto_detect_target(
         let target_info = session.target_info().cloned().ok_or_else(|| {
             "Could not detect target MCU information from connected probe".to_string()
         })?;
+        let cancellable = cancellable_stages(session.as_ref());
 
         *state.session.lock().map_err(|e| e.to_string())? = Some(session);
-        Ok(target_info_dto(&target_info))
+        Ok(target_info_dto(&target_info, cancellable))
     })
     .await
 }
@@ -894,7 +918,9 @@ pub async fn start_batch(
 pub fn cancel_operation(app: AppHandle, state: State<'_, AppState>) -> Result<String, String> {
     state.cancel();
     let event = FlashEvent::Warning {
-        message: "Cancellation requested; stopping at the next block boundary...".to_string(),
+        message: "Cancellation requested; stopping at the next block boundary of an \
+                  interruptible stage..."
+            .to_string(),
     };
     emit_event(&app, &event);
     state.push_event(event);

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { useState } from "react";
 import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
 import { AppProvider } from "../state/AppContext";
 import { BatchPanel } from "../components/BatchPanel";
@@ -27,6 +28,19 @@ function emit(payload: BatchEventDto) {
   });
 }
 
+/// Renders the Batch tab beside another tab, mounting only one at a time the
+/// way App.tsx does.
+function TabSwitcher() {
+  const [tab, setTab] = useState<"batch" | "other">("batch");
+  return (
+    <div>
+      <button onClick={() => setTab("batch")}>Batch tab</button>
+      <button onClick={() => setTab("other")}>Other tab</button>
+      {tab === "batch" ? <BatchPanel /> : <p>Some other tab</p>}
+    </div>
+  );
+}
+
 const report = {
   units: [],
   passed: 2,
@@ -38,7 +52,7 @@ const report = {
 
 /// Loads a firmware file into the shared state; the panel refuses to start
 /// without one.
-async function renderWithFirmware() {
+function mockInvoke() {
   invoke.mockImplementation((command: string) => {
     if (command === "load_firmware") {
       return Promise.resolve({
@@ -61,7 +75,10 @@ async function renderWithFirmware() {
     }
     return Promise.resolve([]);
   });
+}
 
+async function renderWithFirmware() {
+  mockInvoke();
   const view = render(
     <AppProvider>
       <BatchPanel />
@@ -74,6 +91,7 @@ describe("BatchPanel", () => {
   beforeEach(() => {
     invoke.mockReset();
     batchHandlers.length = 0;
+    localStorage.clear();
   });
 
   it("blocks the run until firmware is loaded", async () => {
@@ -83,6 +101,56 @@ describe("BatchPanel", () => {
     ).toBeTruthy();
     expect(screen.getByRole("button", { name: "Start run" }).hasAttribute("disabled")).toBe(
       true
+    );
+  });
+
+  it("keeps its settings when the tab is left and reopened", async () => {
+    // App.tsx renders one tab at a time, so leaving the Batch tab unmounts the
+    // panel. The form has to outlive that or an operator loses the run setup.
+    mockInvoke();
+    const view = render(
+      <AppProvider>
+        <TabSwitcher />
+      </AppProvider>
+    );
+
+    fireEvent.change(screen.getByLabelText("Serial address"), {
+      target: { value: "0801F800" },
+    });
+    fireEvent.change(screen.getByLabelText("Board count"), {
+      target: { value: "24" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Other tab" }));
+    expect(screen.queryByLabelText("Serial address")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Batch tab" }));
+
+    expect(screen.getByLabelText("Serial address").getAttribute("value")).toBe("0801F800");
+    expect(screen.getByLabelText("Board count").getAttribute("value")).toBe("24");
+    view.unmount();
+  });
+
+  it("still has them after the application restarts", async () => {
+    mockInvoke();
+    const first = render(
+      <AppProvider>
+        <BatchPanel />
+      </AppProvider>
+    );
+    fireEvent.change(screen.getByLabelText("Log file"), {
+      target: { value: "C:/runs/shift.csv" },
+    });
+    first.unmount();
+
+    // A fresh provider stands in for the next launch: settings come back from
+    // storage rather than resetting to the defaults.
+    render(
+      <AppProvider>
+        <BatchPanel />
+      </AppProvider>
+    );
+    expect(screen.getByLabelText("Log file").getAttribute("value")).toBe(
+      "C:/runs/shift.csv"
     );
   });
 

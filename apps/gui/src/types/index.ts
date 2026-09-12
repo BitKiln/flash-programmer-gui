@@ -25,6 +25,8 @@ export interface TargetInfo {
   ram_size: number;
   page_size: number;
   sector_count: number;
+  /** Stages a cancellation request can actually stop part way through. */
+  cancellable_stages: string[];
 }
 
 // ── Firmware types ───────────────────────────────────────────────────────────
@@ -184,6 +186,27 @@ export interface AppState {
   progress: ProgressInfo;
   logs: LogEntry[];
   recentFiles: string[];
+  /** Batch tab settings; kept here so switching tabs does not clear them. */
+  batchSettings: BatchSettings;
+}
+
+/** The Batch tab's form, minus the firmware and probe it reads from AppState. */
+export interface BatchSettings {
+  target: string;
+  count: string;
+  protocol: string;
+  speed: number;
+  rearm: "detach" | "immediate";
+  delayMs: string;
+  logPath: string;
+  logJson: boolean;
+  stopOnError: boolean;
+  serialAddress: string;
+  serialFormat: string;
+  serialStart: string;
+  serialStep: string;
+  serialEncoding: "ascii" | "u32le" | "u32be" | "u64le";
+  serialWidth: string;
 }
 
 // ── Profiles ─────────────────────────────────────────────────────────────────

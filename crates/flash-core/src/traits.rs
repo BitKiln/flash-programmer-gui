@@ -1,7 +1,7 @@
 use firmware_parser::MemorySegment;
 
 use crate::error::FlashError;
-use crate::progress::ProgressCallback;
+use crate::progress::{FlashStage, ProgressCallback};
 use crate::types::{ConnectionConfig, ProbeInfo, ProgramOptions, TargetInfo, VerifyReport};
 
 /// Factory and discovery contract for debug probes.
@@ -34,6 +34,19 @@ pub trait FlashSession: Send {
     /// Returns target MCU geometry and capabilities if known.
     fn target_info(&self) -> Option<&TargetInfo> {
         None
+    }
+
+    /// Whether a cancellation request can take effect part way through `stage`.
+    ///
+    /// Cancellation is cooperative: a backend can only honour it where it polls
+    /// between units of work. Backends that hand a whole stage to a driver in
+    /// one call cannot, and callers must not offer a Stop that would do
+    /// nothing. Defaults to true for backends that poll throughout.
+    fn can_interrupt(&self, stage: FlashStage) -> bool {
+        matches!(
+            stage,
+            FlashStage::Erasing | FlashStage::Programming | FlashStage::Verifying
+        )
     }
 
     /// Whether `program` already erases the flash it writes.

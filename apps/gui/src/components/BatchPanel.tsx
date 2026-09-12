@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useAppContext } from "../state/AppContext";
 import { useFlashProgrammer } from "../hooks/useFlashProgrammer";
-import type { BatchEventDto, BatchUnit } from "../types";
+import type { BatchEventDto, BatchSettings, BatchUnit } from "../types";
 
 /**
  * Production mode: program the same firmware onto a run of boards.
@@ -13,25 +13,32 @@ import type { BatchEventDto, BatchUnit } from "../types";
  * finishes or aborts at a block boundary, and the run ends with it.
  */
 export function BatchPanel() {
-  const { state } = useAppContext();
+  const { state, dispatch } = useAppContext();
   const { startBatch, cancelOperation } = useFlashProgrammer();
 
-  const [count, setCount] = useState<string>("10");
-  const [rearm, setRearm] = useState<"detach" | "immediate">("detach");
-  const [stopOnError, setStopOnError] = useState(false);
-  const [delayMs, setDelayMs] = useState<string>("0");
-  const [logPath, setLogPath] = useState("");
-  const [logJson, setLogJson] = useState(false);
-  const [serialAddress, setSerialAddress] = useState("");
-  const [serialFormat, setSerialFormat] = useState("SN-{n:06}");
-  const [serialStart, setSerialStart] = useState("1");
-  const [serialStep, setSerialStep] = useState("1");
-  const [serialEncoding, setSerialEncoding] =
-    useState<"ascii" | "u32le" | "u32be" | "u64le">("ascii");
-  const [serialWidth, setSerialWidth] = useState("16");
-  const [target, setTarget] = useState("");
-  const [protocol, setProtocol] = useState("Swd");
-  const [speed, setSpeed] = useState(4000);
+  // The form is shared state: an operator who steps over to the Memory tab
+  // mid-shift comes back to the run they set up, not a blank form.
+  const settings = state.batchSettings;
+  const update = (changed: Partial<BatchSettings>) =>
+    dispatch({ type: "SET_BATCH_SETTINGS", settings: changed });
+
+  const {
+    target,
+    count,
+    protocol,
+    speed,
+    rearm,
+    delayMs,
+    logPath,
+    logJson,
+    stopOnError,
+    serialAddress,
+    serialFormat,
+    serialStart,
+    serialStep,
+    serialEncoding,
+    serialWidth,
+  } = settings;
 
   const [units, setUnits] = useState<BatchUnit[]>([]);
   const [waiting, setWaiting] = useState<string | null>(null);
@@ -42,9 +49,9 @@ export function BatchPanel() {
   // Adopt the connected target once, so the operator does not retype it.
   useEffect(() => {
     if (state.targetInfo && target === "") {
-      setTarget(state.targetInfo.name);
+      update({ target: state.targetInfo.name });
     }
-  }, [state.targetInfo, target]);
+  }, [state.targetInfo, target]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     let cancelled = false;
@@ -184,7 +191,7 @@ export function BatchPanel() {
           <input
             aria-label="Batch target"
             value={target}
-            onChange={(event) => setTarget(event.target.value)}
+            onChange={(event) => update({ target: event.target.value })}
             placeholder="auto"
             className="bg-bg-primary border border-gray-700 rounded px-2 py-1 font-mono"
           />
@@ -195,7 +202,7 @@ export function BatchPanel() {
           <input
             aria-label="Board count"
             value={count}
-            onChange={(event) => setCount(event.target.value)}
+            onChange={(event) => update({ count: event.target.value })}
             className="bg-bg-primary border border-gray-700 rounded px-2 py-1 font-mono"
           />
           {countInvalid && (
@@ -208,7 +215,7 @@ export function BatchPanel() {
           <select
             aria-label="Batch interface"
             value={protocol}
-            onChange={(event) => setProtocol(event.target.value)}
+            onChange={(event) => update({ protocol: event.target.value })}
             className="bg-bg-primary border border-gray-700 rounded px-2 py-1"
           >
             <option value="Swd">SWD</option>
@@ -222,7 +229,9 @@ export function BatchPanel() {
             aria-label="Batch speed"
             type="number"
             value={speed}
-            onChange={(event) => setSpeed(Number.parseInt(event.target.value, 10) || 0)}
+            onChange={(event) =>
+              update({ speed: Number.parseInt(event.target.value, 10) || 0 })
+            }
             className="bg-bg-primary border border-gray-700 rounded px-2 py-1 font-mono"
           />
         </label>
@@ -232,7 +241,9 @@ export function BatchPanel() {
           <select
             aria-label="Rearm policy"
             value={rearm}
-            onChange={(event) => setRearm(event.target.value as "detach" | "immediate")}
+            onChange={(event) =>
+              update({ rearm: event.target.value as "detach" | "immediate" })
+            }
             className="bg-bg-primary border border-gray-700 rounded px-2 py-1"
           >
             <option value="detach">Wait for swap</option>
@@ -246,7 +257,7 @@ export function BatchPanel() {
             aria-label="Delay between boards"
             type="number"
             value={delayMs}
-            onChange={(event) => setDelayMs(event.target.value)}
+            onChange={(event) => update({ delayMs: event.target.value })}
             className="bg-bg-primary border border-gray-700 rounded px-2 py-1 font-mono"
           />
         </label>
@@ -256,7 +267,7 @@ export function BatchPanel() {
           <input
             aria-label="Log file"
             value={logPath}
-            onChange={(event) => setLogPath(event.target.value)}
+            onChange={(event) => update({ logPath: event.target.value })}
             placeholder="C:\\runs\\batch-2026-09-12.csv"
             className="bg-bg-primary border border-gray-700 rounded px-2 py-1 font-mono"
           />
@@ -266,7 +277,7 @@ export function BatchPanel() {
           <input
             type="checkbox"
             checked={logJson}
-            onChange={(event) => setLogJson(event.target.checked)}
+            onChange={(event) => update({ logJson: event.target.checked })}
           />
           <span className="text-gray-400">Write the log as JSON</span>
         </label>
@@ -275,7 +286,7 @@ export function BatchPanel() {
           <input
             type="checkbox"
             checked={stopOnError}
-            onChange={(event) => setStopOnError(event.target.checked)}
+            onChange={(event) => update({ stopOnError: event.target.checked })}
           />
           <span className="text-gray-400">Stop on first failure</span>
         </label>
@@ -291,7 +302,7 @@ export function BatchPanel() {
             <input
               aria-label="Serial address"
               value={serialAddress}
-              onChange={(event) => setSerialAddress(event.target.value)}
+              onChange={(event) => update({ serialAddress: event.target.value })}
               placeholder="0801F800"
               className="bg-bg-primary border border-gray-700 rounded px-2 py-1 font-mono"
             />
@@ -305,7 +316,7 @@ export function BatchPanel() {
             <input
               aria-label="Serial template"
               value={serialFormat}
-              onChange={(event) => setSerialFormat(event.target.value)}
+              onChange={(event) => update({ serialFormat: event.target.value })}
               className="bg-bg-primary border border-gray-700 rounded px-2 py-1 font-mono"
             />
           </label>
@@ -315,7 +326,7 @@ export function BatchPanel() {
             <input
               aria-label="Serial start"
               value={serialStart}
-              onChange={(event) => setSerialStart(event.target.value)}
+              onChange={(event) => update({ serialStart: event.target.value })}
               className="bg-bg-primary border border-gray-700 rounded px-2 py-1 font-mono"
             />
           </label>
@@ -325,7 +336,7 @@ export function BatchPanel() {
             <input
               aria-label="Serial step"
               value={serialStep}
-              onChange={(event) => setSerialStep(event.target.value)}
+              onChange={(event) => update({ serialStep: event.target.value })}
               className="bg-bg-primary border border-gray-700 rounded px-2 py-1 font-mono"
             />
           </label>
@@ -336,9 +347,13 @@ export function BatchPanel() {
               aria-label="Serial encoding"
               value={serialEncoding}
               onChange={(event) =>
-                setSerialEncoding(
-                  event.target.value as "ascii" | "u32le" | "u32be" | "u64le"
-                )
+                update({
+                  serialEncoding: event.target.value as
+                    | "ascii"
+                    | "u32le"
+                    | "u32be"
+                    | "u64le",
+                })
               }
               className="bg-bg-primary border border-gray-700 rounded px-2 py-1"
             >
@@ -354,7 +369,7 @@ export function BatchPanel() {
             <input
               aria-label="Serial width"
               value={serialWidth}
-              onChange={(event) => setSerialWidth(event.target.value)}
+              onChange={(event) => update({ serialWidth: event.target.value })}
               className="bg-bg-primary border border-gray-700 rounded px-2 py-1 font-mono"
             />
           </label>

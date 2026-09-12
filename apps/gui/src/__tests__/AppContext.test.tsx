@@ -71,6 +71,7 @@ describe("AppContext", () => {
               ram_size: 96 * 1024,
               page_size: 1024,
               sector_count: 8,
+              cancellable_stages: ["erasing", "programming", "verifying"],
             },
           });
         }, 0);
