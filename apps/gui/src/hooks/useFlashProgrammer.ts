@@ -121,6 +121,17 @@ export function useFlashTelemetry() {
 export function useFlashProgrammer() {
   const { state, dispatch, addLog } = useAppContext();
 
+  // A raw binary was parsed at an address the user can choose, so every later
+  // command has to be told the same one. Re-parsing without it would put the
+  // image back at the default and flash it to the wrong place.
+  const loadedBaseAddress = useCallback(
+    () =>
+      state.firmware && state.firmware.format.toLowerCase().includes("raw")
+        ? state.firmware.base_address
+        : null,
+    [state.firmware]
+  );
+
   // ── Probe Discovery ──────────────────────────────────────────────────────
 
   const refreshProbes = useCallback(async () => {
@@ -322,7 +333,7 @@ export function useFlashProgrammer() {
       try {
         return await invoke<(number | null)[]>("read_firmware_window", {
           path: state.firmwarePath,
-          baseAddress: null,
+          baseAddress: loadedBaseAddress(),
           address,
           length,
         });
@@ -331,7 +342,7 @@ export function useFlashProgrammer() {
         return null;
       }
     },
-    [state.firmwarePath, addLog]
+    [state.firmwarePath, loadedBaseAddress, addLog]
   );
 
   const saveMemoryRegion = useCallback(
@@ -448,7 +459,7 @@ export function useFlashProgrammer() {
     try {
       const result = await invoke<FlashResult>("flash_firmware", {
         path: state.firmwarePath,
-        baseAddress: null,
+        baseAddress: loadedBaseAddress(),
         verify: state.flashOptions.verify,
         reset: state.flashOptions.reset,
         chipErase: state.flashOptions.chipErase,
@@ -471,6 +482,7 @@ export function useFlashProgrammer() {
   }, [
     state.firmwarePath,
     state.flashOptions,
+    loadedBaseAddress,
     dispatch,
     addLog,
     reportFailure,
@@ -510,7 +522,7 @@ export function useFlashProgrammer() {
     try {
       const result = await invoke<VerifyResult>("verify_firmware", {
         path: state.firmwarePath,
-        baseAddress: null,
+        baseAddress: loadedBaseAddress(),
       });
 
       dispatch({ type: "SET_FLASH_STATUS", status: "completed" });
@@ -533,6 +545,7 @@ export function useFlashProgrammer() {
     }
   }, [
     state.firmwarePath,
+    loadedBaseAddress,
     dispatch,
     addLog,
     reportFailure,

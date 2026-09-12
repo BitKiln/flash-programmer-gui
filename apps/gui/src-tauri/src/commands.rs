@@ -272,6 +272,15 @@ fn flash_event_to_dto(event: &FlashEvent) -> FlashEventDto {
     }
 }
 
+/// The base address to parse a raw binary at.
+///
+/// An explicit one always wins. Otherwise the connected target's own flash
+/// base is the only sensible guess -- 0 on an ESP part, 0x08000000 on an
+/// STM32 -- and with nothing connected the parser's own default applies.
+fn resolve_base(base_address: Option<u32>, state: &State<'_, AppState>) -> Option<u32> {
+    base_address.or_else(|| connected_flash_base(state))
+}
+
 /// Flash base of the connected target, if anything is connected.
 fn connected_flash_base(state: &State<'_, AppState>) -> Option<u32> {
     let session = state.session.lock().ok()?;
@@ -518,7 +527,7 @@ pub fn load_firmware(
     // Assuming a fixed 0x08000000 put an ESP image -- whose flash starts at 0
     // -- a long way past the end of the part. When a target is connected, its
     // own flash base is the only sensible guess.
-    let base_address = base_address.or_else(|| connected_flash_base(&state));
+    let base_address = resolve_base(base_address, &state);
     let image = firmware_parser::parse_file(&path, base_address).map_err(|e| e.to_string())?;
 
     Ok(FirmwareInfoDto {
@@ -567,6 +576,7 @@ pub async fn flash_firmware(
     reset: bool,
     chip_erase: bool,
 ) -> Result<FlashResultDto, String> {
+    let base_address = resolve_base(base_address, &state);
     let state = (*state).clone();
     in_background(move || {
         let image = firmware_parser::parse_file(&path, base_address).map_err(|e| e.to_string())?;
@@ -634,6 +644,7 @@ pub async fn verify_firmware(
     path: String,
     base_address: Option<u32>,
 ) -> Result<VerifyResultDto, String> {
+    let base_address = resolve_base(base_address, &state);
     let state = (*state).clone();
     in_background(move || {
         let image = firmware_parser::parse_file(&path, base_address).map_err(|e| e.to_string())?;
@@ -830,6 +841,7 @@ pub async fn start_batch(
     serial_encoding: Option<String>,
     serial_width: Option<usize>,
 ) -> Result<BatchReportDto, String> {
+    let base_address = resolve_base(base_address, &state);
     let state = (*state).clone();
     in_background(move || {
         let image = firmware_parser::parse_file(&path, base_address).map_err(|e| e.to_string())?;

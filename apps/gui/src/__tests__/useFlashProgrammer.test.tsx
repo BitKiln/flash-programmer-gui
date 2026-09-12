@@ -204,3 +204,74 @@ describe("useFlashProgrammer", () => {
     );
   });
 });
+
+/** A loaded raw binary sitting at a chosen offset. */
+function RawBinaryHarness({
+  onReady,
+}: {
+  onReady: (api: ReturnType<typeof useFlashProgrammer>) => void;
+}) {
+  const { dispatch } = useAppContext();
+  const api = useFlashProgrammer();
+
+  useEffect(() => {
+    dispatch({
+      type: "SET_FIRMWARE",
+      firmware: {
+        format: "Raw Binary",
+        file_path: "/build/mp_esp32.bin",
+        file_size_bytes: 1790544,
+        total_firmware_bytes: 1790544,
+        base_address: 0x1000,
+        highest_address: 0x1b6250,
+        segment_count: 1,
+        entry_point: null,
+        entry_point_source: "not declared",
+        crc32: 0xdefb266b,
+        segments: [],
+        gaps: [],
+      },
+      path: "/build/mp_esp32.bin",
+    });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    onReady(api);
+  }, [api, onReady]);
+
+  return null;
+}
+
+describe("raw binary base address", () => {
+  beforeEach(() => {
+    invoke.mockReset();
+    subscriptions.length = 0;
+  });
+
+  it("flashes a raw binary at the address it was loaded at", async () => {
+    // The base of a raw image is chosen, not read from the file, so every
+    // later command has to be told the same one -- otherwise the backend
+    // re-parses at its default and writes to the wrong place.
+    let api: ReturnType<typeof useFlashProgrammer> | undefined;
+    render(
+      <AppProvider>
+        <RawBinaryHarness onReady={(ready) => (api = ready)} />
+      </AppProvider>
+    );
+    await waitFor(() => expect(api).toBeDefined());
+
+    invoke.mockResolvedValue({
+      success: true,
+      bytes_written: 4,
+      duration_ms: 1,
+      verified: true,
+      message: "done",
+    });
+    await api!.flashFirmware();
+
+    expect(invoke).toHaveBeenCalledWith(
+      "flash_firmware",
+      expect.objectContaining({ baseAddress: 0x1000 })
+    );
+  });
+});
