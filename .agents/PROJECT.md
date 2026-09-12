@@ -126,19 +126,30 @@ pub fn validate_target_bounds(image: &FirmwareImage, flash_start: u32, flash_siz
 ```rust
 pub trait FlashBackend: Send + Sync {
     fn name(&self) -> &'static str;
+    /// Scheme this backend claims on a probe identifier ("probe", "mock", "esp").
+    fn scheme(&self) -> &'static str;
     fn list_probes(&self) -> Result<Vec<ProbeInfo>, FlashError>;
     fn open_session(&self, config: &ConnectionConfig) -> Result<Box<dyn FlashSession>, FlashError>;
+    fn detect_target(&self, config: &ConnectionConfig) -> Result<TargetInfo, FlashError>;  // defaulted
 }
 
 pub trait FlashSession: Send {
-    fn erase_all(&mut self, cb: Option<&ProgressCallback>) -> Result<(), FlashError>;
-    fn erase_range(&mut self, start: u32, length: u32, cb: Option<&ProgressCallback>) -> Result<(), FlashError>;
-    fn program(&mut self, segments: &[MemorySegment], options: &ProgramOptions, cb: Option<&ProgressCallback>) -> Result<(), FlashError>;
-    fn verify(&mut self, segments: &[MemorySegment], cb: Option<&ProgressCallback>) -> Result<VerifyReport, FlashError>;
+    fn target_info(&self) -> Option<&TargetInfo>;                    // defaulted
+    fn can_interrupt(&self, stage: FlashStage) -> bool;              // defaulted
+    fn program_erases_target(&self) -> bool;                         // defaulted
+    fn erase_all(&mut self, cb: Option<&dyn ProgressCallback>) -> Result<(), FlashError>;
+    fn erase_range(&mut self, start: u32, length: u32, cb: Option<&dyn ProgressCallback>) -> Result<(), FlashError>;
+    fn program(&mut self, segments: &[MemorySegment], options: &ProgramOptions, cb: Option<&dyn ProgressCallback>) -> Result<(), FlashError>;
+    fn verify(&mut self, segments: &[MemorySegment], cb: Option<&dyn ProgressCallback>) -> Result<VerifyReport, FlashError>;
     fn read_memory(&mut self, address: u32, length: u32) -> Result<Vec<u8>, FlashError>;
     fn reset(&mut self, halt: bool) -> Result<(), FlashError>;
     fn close(&mut self) -> Result<(), FlashError>;
 }
+
+/// One selection site. Routes on the scheme of the probe identifier; an
+/// identifier with no recognised scheme falls through to the first backend
+/// registered, so bare ST-Link serials keep working.
+pub struct BackendRegistry { /* Vec<Box<dyn FlashBackend>> */ }
 ```
 
 ### 3. Tauri IPC Commands (`src-tauri` -> React Frontend)
@@ -154,7 +165,12 @@ Implemented and registered in `apps/gui/src-tauri/src/lib.rs`:
 - `reset_target(halt)` -> `String`
 
 Plus `cancel_operation`, `read_memory`, `read_firmware_window`, `save_memory_region`,
-`list_profiles`, `load_profile`, `save_profile` and `delete_profile`.
+`start_batch`, `list_target_suggestions`, `list_profiles`, `load_profile`, `save_profile`
+and `delete_profile`.
+
+`list_target_suggestions()` -> `Vec<TargetSuggestionDto>` renders the target picker from
+`device-db` rather than a list baked into the frontend, so a newly supported family needs
+no React change.
 
 Progress telemetry is **pushed**: the backend emits `flash:progress`, `flash:status` and `flash:log`
 as an operation proceeds. The frontend subscribes before it issues the command that produces the
@@ -175,17 +191,24 @@ flash_programmer_gui/
 │   │       ├── golden_vectors.rs
 │   │       ├── adversarial_stress.rs
 │   │       └── elf_fixture.rs
-│   ├── flash-core/                     # M2: probe abstraction
-│   │   ├── src/
-│   │   │   ├── traits.rs               # FlashBackend / FlashSession
-│   │   │   ├── manager.rs              # FlashManager::execute_flash
-│   │   │   ├── progress.rs  types.rs  error.rs  unified.rs
-│   │   │   ├── live/                   # probe-rs backend + target detection
-│   │   │   └── mock/                   # NOR physics, profiles, fault injection
-│   │   └── tests/
-│   │       ├── mock_integration.rs
-│   │       ├── fault_injection.rs
-│   │       └── adversarial_challenge.rs
+│   ├── flash-core/                     # M2: traits, registry, orchestration
+│   │   └── src/
+│   │       ├── traits.rs               # FlashBackend / FlashSession
+│   │       ├── registry.rs             # BackendRegistry, scheme routing
+│   │       ├── conformance.rs          # the suite every backend must pass
+│   │       ├── manager.rs              # FlashManager::execute_flash
+│   │       ├── batch.rs  serial.rs  profile.rs
+│   │       └── progress.rs  types.rs  error.rs
+│   ├── device-db/                      # aliases, family/backend matrix, doc generator
+│   ├── backends/
+│   │   ├── probe-rs/                   # scheme "probe": ST-Link, DAPLink, J-Link
+│   │   │   ├── src/backend.rs  src/detect.rs
+│   │   │   └── tests/conformance.rs    # #[ignore]d; needs a board
+│   │   └── mock/                       # scheme "mock": NOR physics, faults
+│   │       └── tests/                  # mock_integration, fault_injection,
+│   │                                   # adversarial_challenge, batch_runner,
+│   │                                   # serial_numbers, conformance
+│   ├── flash-backends/                 # aggregator: default_registry()
 │   ├── flashgui-cli/                   # M3: headless CLI
 │   │   ├── src/
 │   │   │   ├── cli.rs  lib.rs  main.rs  output.rs  profile.rs  exit_codes.rs
