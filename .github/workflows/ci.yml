@@ -9,8 +9,6 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
-  # Match the toolchain the project is developed against; npm 10 on Node 20
-  # resolves this lockfile differently and `npm ci` refuses it.
   NODE_VERSION: 22
 
 jobs:
