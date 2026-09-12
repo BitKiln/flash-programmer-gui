@@ -9,8 +9,8 @@ use std::io::Write;
 use clap::Parser;
 
 pub use cli::{
-    parse_address, Cli, Commands, EraseArgs, FlashArgs, ProfileSubcommand, Protocol, ResetArgs,
-    VerifyArgs,
+    parse_address, BatchArgs, Cli, Commands, EraseArgs, FlashArgs, ProfileSubcommand, Protocol,
+    Rearm, ResetArgs, VerifyArgs,
 };
 pub use exit_codes::{
     CliError, EXIT_FIRMWARE_PARSE_ERROR, EXIT_FLASH_VERIFY_ERROR, EXIT_INVALID_ARGS_OR_PROFILE,
@@ -46,6 +46,9 @@ where
         Commands::Devices => commands::devices::handle_devices(&cli, stdout, stderr),
         Commands::Flash(ref flash_args) => {
             commands::flash::handle_flash(&cli, flash_args, stdout, stderr)
+        }
+        Commands::Batch(ref batch_args) => {
+            commands::batch::handle_batch(&cli, batch_args, stdout, stderr)
         }
         Commands::Erase(ref erase_args) => {
             commands::erase::handle_erase(&cli, erase_args, stdout, stderr)

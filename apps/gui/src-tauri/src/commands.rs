@@ -2,6 +2,11 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 
 use firmware_parser::{EntryPointSource, FirmwareFormat};
+use flash_core::batch::{
+    run_batch_with, BatchConfig, BatchEvent, BatchObserver, RearmPolicy, StopReason, UnitRecord,
+    UnitStatus,
+};
+use flash_core::serial::{program_serial, SerialAllocator, SerialConfig, SerialEncoding};
 use flash_core::{
     ConnectionConfig, FlashEvent, FlashManager, FlashStage, LogLevel, ProgramOptions, WireProtocol,
 };
@@ -33,6 +38,10 @@ pub struct TargetInfoDto {
     pub ram_size: u32,
     pub page_size: u32,
     pub sector_count: usize,
+    /// Stages a cancellation request can actually stop part way through.
+    /// A backend that hands a whole stage to its driver in one call cannot
+    /// be interrupted, and the UI must not offer a Stop that would do nothing.
+    pub cancellable_stages: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -104,6 +113,50 @@ pub struct FlashResultDto {
     pub verify_passed: Option<bool>,
     pub reset_performed: bool,
     pub message: String,
+}
+
+/// One board of a batch run, as the frontend sees it.
+#[derive(Debug, Clone, Serialize)]
+pub struct BatchUnitDto {
+    pub index: u32,
+    pub status: String,
+    /// Serial stamped into this board, when serial programming is on.
+    pub serial: Option<String>,
+    pub target: Option<String>,
+    pub bytes_flashed: u32,
+    pub verified: bool,
+    pub duration_ms: u64,
+    pub started_unix_ms: u64,
+    pub message: String,
+}
+
+/// Outcome of a whole batch run.
+#[derive(Debug, Clone, Serialize)]
+pub struct BatchReportDto {
+    pub units: Vec<BatchUnitDto>,
+    pub passed: u32,
+    pub failed: u32,
+    pub duration_ms: u64,
+    pub stop_reason: String,
+    /// Where the production log was written, when one was requested.
+    pub log_path: Option<String>,
+}
+
+/// Batch progress, published on the `batch:event` channel.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type")]
+pub enum BatchEventDto {
+    /// Waiting for the programmed board to be disconnected.
+    WaitingForDetach { index: u32 },
+    /// Waiting for the next board to be connected.
+    WaitingForAttach { index: u32 },
+    UnitStarted { index: u32 },
+    UnitFinished { unit: BatchUnitDto },
+    Finished {
+        passed: u32,
+        failed: u32,
+        stop_reason: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -256,8 +309,25 @@ fn format_to_string(format: &FirmwareFormat) -> String {
     }
 }
 
+/// Stages the session can abort part way through, named as the frontend
+/// spells them.
+fn cancellable_stages(session: &dyn flash_core::traits::FlashSession) -> Vec<String> {
+    [
+        FlashStage::Erasing,
+        FlashStage::Programming,
+        FlashStage::Verifying,
+    ]
+    .into_iter()
+    .filter(|stage| session.can_interrupt(*stage))
+    .map(|stage| stage_to_string(&stage))
+    .collect()
+}
+
 /// Maps core target metadata to the frontend DTO.
-fn target_info_dto(info: &flash_core::types::TargetInfo) -> TargetInfoDto {
+fn target_info_dto(
+    info: &flash_core::types::TargetInfo,
+    cancellable: Vec<String>,
+) -> TargetInfoDto {
     TargetInfoDto {
         name: info.name.clone(),
         display_name: info.display_name.clone(),
@@ -268,6 +338,7 @@ fn target_info_dto(info: &flash_core::types::TargetInfo) -> TargetInfoDto {
         ram_size: info.ram_size,
         page_size: info.page_size,
         sector_count: info.sectors.len(),
+        cancellable_stages: cancellable,
     }
 }
 
@@ -360,10 +431,11 @@ pub async fn connect_probe(
         };
 
         let target_info = session.target_info().cloned();
+        let cancellable = cancellable_stages(session.as_ref());
         *state.session.lock().map_err(|e| e.to_string())? = Some(session);
 
         match target_info {
-            Some(info) => Ok(target_info_dto(&info)),
+            Some(info) => Ok(target_info_dto(&info, cancellable)),
             None => Err("Connected but target info not available".to_string()),
         }
     })
@@ -398,9 +470,10 @@ pub async fn auto_detect_target(
         let target_info = session.target_info().cloned().ok_or_else(|| {
             "Could not detect target MCU information from connected probe".to_string()
         })?;
+        let cancellable = cancellable_stages(session.as_ref());
 
         *state.session.lock().map_err(|e| e.to_string())? = Some(session);
-        Ok(target_info_dto(&target_info))
+        Ok(target_info_dto(&target_info, cancellable))
     })
     .await
 }
@@ -614,6 +687,227 @@ fn describe_failure(app: &AppHandle, state: &AppState, error: flash_core::FlashE
     }
 }
 
+fn unit_dto(record: &UnitRecord) -> BatchUnitDto {
+    BatchUnitDto {
+        index: record.index,
+        status: record.status.as_str().to_string(),
+        serial: record.serial.clone(),
+        target: record.target.clone(),
+        bytes_flashed: record.bytes_flashed,
+        verified: record.verified,
+        duration_ms: record.duration_ms,
+        started_unix_ms: record.started_unix_ms,
+        message: record.message.clone(),
+    }
+}
+
+fn stop_reason_to_string(reason: &StopReason) -> String {
+    match reason {
+        StopReason::CountReached => "count_reached".to_string(),
+        StopReason::Cancelled => "cancelled".to_string(),
+        StopReason::FailureStop => "failure_stop".to_string(),
+        StopReason::AttachTimeout => "attach_timeout".to_string(),
+        StopReason::DetachTimeout => "detach_timeout".to_string(),
+    }
+}
+
+/// Publishes batch progress and carries the shared cancellation flag, so the
+/// existing Stop button ends a run between boards as well as mid-write.
+struct AppBatchObserver {
+    app: AppHandle,
+    state: AppState,
+}
+
+impl BatchObserver for AppBatchObserver {
+    fn on_batch_event(&self, event: BatchEvent) {
+        let dto = match event {
+            BatchEvent::WaitingForDetach { index } => BatchEventDto::WaitingForDetach { index },
+            BatchEvent::WaitingForAttach { index } => BatchEventDto::WaitingForAttach { index },
+            BatchEvent::UnitStarted { index, .. } => BatchEventDto::UnitStarted { index },
+            BatchEvent::UnitFinished(record) => {
+                // Mirror the outcome into the console log so a batch reads back
+                // in the same place as a single flash.
+                let level = match record.status {
+                    UnitStatus::Passed => LogLevel::Info,
+                    UnitStatus::Failed => LogLevel::Error,
+                };
+                let log = FlashEvent::Log {
+                    level,
+                    message: format!(
+                        "Unit {} {}: {}",
+                        record.index,
+                        record.status.as_str(),
+                        record.message
+                    ),
+                    timestamp_ms: record.started_unix_ms,
+                };
+                emit_event(&self.app, &log);
+                self.state.push_event(log);
+                BatchEventDto::UnitFinished {
+                    unit: unit_dto(&record),
+                }
+            }
+            BatchEvent::BatchFinished {
+                passed,
+                failed,
+                stop_reason,
+            } => BatchEventDto::Finished {
+                passed,
+                failed,
+                stop_reason: stop_reason_to_string(&stop_reason),
+            },
+        };
+        let _ = self.app.emit("batch:event", dto);
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.state.is_cancelled()
+    }
+}
+
+/// Programs the same firmware onto a series of boards.
+///
+/// The run owns the probe for its whole duration, so the interactive session is
+/// closed first and the frontend has to reconnect afterwards. Stopping is the
+/// same gesture as for a single flash: `cancel_operation` ends the board in
+/// flight and the run with it.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn start_batch(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    path: String,
+    base_address: Option<u32>,
+    probe_id: Option<String>,
+    target: String,
+    protocol: String,
+    speed: u32,
+    verify: bool,
+    reset: bool,
+    chip_erase: bool,
+    count: Option<u32>,
+    rearm: String,
+    stop_on_error: bool,
+    delay_ms: u64,
+    log_path: Option<String>,
+    log_json: bool,
+    serial_address: Option<u32>,
+    serial_format: Option<String>,
+    serial_start: Option<u64>,
+    serial_step: Option<u64>,
+    serial_encoding: Option<String>,
+    serial_width: Option<usize>,
+) -> Result<BatchReportDto, String> {
+    let state = (*state).clone();
+    in_background(move || {
+        let image = firmware_parser::parse_file(&path, base_address).map_err(|e| e.to_string())?;
+
+        // A batch opens and closes one session per board; an interactive
+        // session left open would hold the probe against it.
+        close_active_session(&state)?;
+
+        let config = BatchConfig {
+            connection: ConnectionConfig {
+                probe_id,
+                target_name: target,
+                protocol: parse_protocol(&protocol),
+                speed_khz: speed,
+                connect_under_reset: false,
+                reset_type: None,
+            },
+            options: ProgramOptions {
+                verify_after: verify,
+                reset_after: reset,
+                chip_erase,
+                chunk_size: 1024,
+            },
+            count,
+            continue_on_error: !stop_on_error,
+            delay_ms,
+            rearm: if rearm.eq_ignore_ascii_case("immediate") {
+                RearmPolicy::Immediate
+            } else {
+                RearmPolicy::Detach
+            },
+            ..BatchConfig::default()
+        };
+
+        state.arm();
+        let emitter = app.clone();
+        let progress =
+            state.progress_callback(move |event: &FlashEvent| emit_event(&emitter, event));
+        let observer = AppBatchObserver {
+            app: app.clone(),
+            state: state.clone(),
+        };
+
+        // Serial programming is opt-in: without an address, boards are
+        // programmed exactly as before.
+        let allocator = serial_address.map(|address| {
+            SerialAllocator::new(SerialConfig {
+                address,
+                format: serial_format.unwrap_or_else(|| "{n}".to_string()),
+                start: serial_start.unwrap_or(1),
+                step: serial_step.unwrap_or(1),
+                encoding: match serial_encoding.as_deref() {
+                    Some("u32le") => SerialEncoding::U32Le,
+                    Some("u32be") => SerialEncoding::U32Be,
+                    Some("u64le") => SerialEncoding::U64Le,
+                    _ => SerialEncoding::Ascii,
+                },
+                width: serial_width.unwrap_or(16),
+                pad: 0xFF,
+                verify: true,
+            })
+        });
+
+        let report = {
+            let backend = state.backend.lock().map_err(|e| e.to_string())?;
+            let mut opener = |cfg: &ConnectionConfig| backend.open_session(cfg);
+            let mut after_unit = |session: &mut dyn flash_core::traits::FlashSession, _i: u32| {
+                match allocator {
+                    Some(ref allocator) => {
+                        program_serial(session, allocator.config(), allocator.take()).map(Some)
+                    }
+                    None => Ok(None),
+                }
+            };
+            run_batch_with(
+                &mut opener,
+                Some(&mut after_unit),
+                &image,
+                &config,
+                Some(&observer),
+                Some(&progress),
+            )
+        };
+
+        let written_log = match log_path {
+            Some(ref target_path) => {
+                let contents = if log_json {
+                    serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?
+                } else {
+                    report.to_csv()
+                };
+                std::fs::write(target_path, contents)
+                    .map_err(|e| format!("Failed to write batch log: {}", e))?;
+                Some(target_path.clone())
+            }
+            None => None,
+        };
+
+        Ok(BatchReportDto {
+            units: report.records.iter().map(unit_dto).collect(),
+            passed: report.passed,
+            failed: report.failed,
+            duration_ms: report.duration_ms,
+            stop_reason: stop_reason_to_string(&report.stop_reason),
+            log_path: written_log,
+        })
+    })
+    .await
+}
+
 /// Requests cancellation of the operation currently in flight.
 ///
 /// The backends poll this at block boundaries, so the target is left in a
@@ -624,7 +918,9 @@ fn describe_failure(app: &AppHandle, state: &AppState, error: flash_core::FlashE
 pub fn cancel_operation(app: AppHandle, state: State<'_, AppState>) -> Result<String, String> {
     state.cancel();
     let event = FlashEvent::Warning {
-        message: "Cancellation requested; stopping at the next block boundary...".to_string(),
+        message: "Cancellation requested; stopping at the next block boundary of an \
+                  interruptible stage..."
+            .to_string(),
     };
     emit_event(&app, &event);
     state.push_event(event);

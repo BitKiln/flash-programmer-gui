@@ -14,12 +14,19 @@ export function FlashControls() {
     state.flashStatus !== "completed" &&
     state.flashStatus !== "cancelled" &&
     state.flashStatus !== "error";
-  // Reset is a single quick transaction with nothing to poll, so it cannot be
-  // cancelled part way through; everything else stops at a block boundary.
-  const isCancellable =
-    state.flashStatus === "erasing" ||
-    state.flashStatus === "programming" ||
-    state.flashStatus === "verifying";
+  // Reset is a single quick transaction with nothing to poll. The rest depends
+  // on the backend: probe-rs runs an erase and a download to completion inside
+  // one call, so a Stop during those stages would do nothing, and the target
+  // tells us which stages it can actually abort.
+  const cancellableStages = state.targetInfo?.cancellable_stages ?? [];
+  const isCancellable = cancellableStages.includes(state.flashStatus);
+  // Busy in a stage the backend cannot interrupt: say so rather than offering
+  // a button that cannot act.
+  const isUninterruptible =
+    !isCancellable &&
+    (state.flashStatus === "erasing" ||
+      state.flashStatus === "programming" ||
+      state.flashStatus === "verifying");
 
   const statusLabel = (): string => {
     switch (state.flashStatus) {
@@ -78,6 +85,14 @@ export function FlashControls() {
           {state.flashStatus === "cancelling"
             ? "Cancelling..."
             : `✕ Cancel ${statusLabel().replace("...", "")}`}
+        </button>
+      ) : isUninterruptible ? (
+        <button
+          disabled
+          title="This stage runs to completion inside the probe driver and cannot be interrupted."
+          className="w-full py-3 bg-gray-700 text-gray-300 rounded-lg text-base font-bold uppercase tracking-wider border border-gray-600 cursor-not-allowed"
+        >
+          {statusLabel().replace("...", "")} cannot be interrupted
         </button>
       ) : (
         <button

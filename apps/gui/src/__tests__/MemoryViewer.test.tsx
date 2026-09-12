@@ -30,6 +30,7 @@ function Connected() {
         ram_size: 786432,
         page_size: 8192,
         sector_count: 256,
+        cancellable_stages: ["verifying"],
       },
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps

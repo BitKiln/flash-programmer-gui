@@ -510,6 +510,13 @@ impl FlashSession for ProbeRsLiveSession {
         true
     }
 
+    /// probe-rs runs an erase and a flash download to completion inside one
+    /// call, with nowhere for us to observe a cancellation request; only the
+    /// verify pass, which we drive chunk by chunk, can stop early.
+    fn can_interrupt(&self, stage: FlashStage) -> bool {
+        matches!(stage, FlashStage::Verifying)
+    }
+
     fn erase_all(&mut self, cb: Option<&dyn ProgressCallback>) -> Result<(), FlashError> {
         let start_time = Instant::now();
         if let Some(callback) = cb {

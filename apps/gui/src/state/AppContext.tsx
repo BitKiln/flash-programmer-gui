@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useReducer, useCallback } from "react";
 import type {
   AppState,
+  BatchSettings,
   ProbeInfo,
   TargetInfo,
   FirmwareInfo,
@@ -37,6 +38,42 @@ const loadRecentFiles = (): string[] => {
   return [];
 };
 
+const BATCH_SETTINGS_KEY = "flash-programmer-batch-settings";
+
+const defaultBatchSettings: BatchSettings = {
+  target: "",
+  count: "10",
+  protocol: "Swd",
+  speed: 4000,
+  rearm: "detach",
+  delayMs: "0",
+  logPath: "",
+  logJson: false,
+  stopOnError: false,
+  serialAddress: "",
+  serialFormat: "SN-{n:06}",
+  serialStart: "1",
+  serialStep: "1",
+  serialEncoding: "ascii",
+  serialWidth: "16",
+};
+
+/// A production run is set up once and referred to across a shift, so the
+/// settings outlive both a tab switch and a restart of the application.
+const loadBatchSettings = (): BatchSettings => {
+  try {
+    const stored = localStorage.getItem(BATCH_SETTINGS_KEY);
+    if (stored) {
+      // Merge over the defaults so settings saved by an older build, which
+      // may lack fields added since, still load.
+      return { ...defaultBatchSettings, ...(JSON.parse(stored) as Partial<BatchSettings>) };
+    }
+  } catch {
+    // ignore parse errors
+  }
+  return defaultBatchSettings;
+};
+
 const initialState: AppState = {
   probes: [],
   selectedProbe: null,
@@ -53,6 +90,7 @@ const initialState: AppState = {
   progress: initialProgress,
   logs: [],
   recentFiles: loadRecentFiles(),
+  batchSettings: loadBatchSettings(),
 };
 
 // ── Actions ──────────────────────────────────────────────────────────────────
@@ -69,7 +107,8 @@ type AppAction =
   | { type: "RESET_PROGRESS" }
   | { type: "ADD_LOG"; level: LogLevel; message: string }
   | { type: "CLEAR_LOGS" }
-  | { type: "ADD_RECENT_FILE"; path: string };
+  | { type: "ADD_RECENT_FILE"; path: string }
+  | { type: "SET_BATCH_SETTINGS"; settings: Partial<BatchSettings> };
 
 // ── Log ID counter ───────────────────────────────────────────────────────────
 
@@ -143,6 +182,16 @@ function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, recentFiles: updated };
     }
 
+    case "SET_BATCH_SETTINGS": {
+      const updated = { ...state.batchSettings, ...action.settings };
+      try {
+        localStorage.setItem(BATCH_SETTINGS_KEY, JSON.stringify(updated));
+      } catch {
+        // ignore storage errors
+      }
+      return { ...state, batchSettings: updated };
+    }
+
     default:
       return state;
   }
@@ -161,7 +210,13 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 // ── Provider ─────────────────────────────────────────────────────────────────
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
-  const [state, dispatch] = useReducer(appReducer, initialState);
+  // Read the persisted slices when the provider mounts, not when this module
+  // is first imported, so a restart picks up what the last session saved.
+  const [state, dispatch] = useReducer(appReducer, initialState, (base) => ({
+    ...base,
+    recentFiles: loadRecentFiles(),
+    batchSettings: loadBatchSettings(),
+  }));
 
   const addLog = useCallback(
     (level: LogLevel, message: string) => {

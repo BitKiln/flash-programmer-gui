@@ -25,6 +25,8 @@ export interface TargetInfo {
   ram_size: number;
   page_size: number;
   sector_count: number;
+  /** Stages a cancellation request can actually stop part way through. */
+  cancellable_stages: string[];
 }
 
 // ── Firmware types ───────────────────────────────────────────────────────────
@@ -184,6 +186,27 @@ export interface AppState {
   progress: ProgressInfo;
   logs: LogEntry[];
   recentFiles: string[];
+  /** Batch tab settings; kept here so switching tabs does not clear them. */
+  batchSettings: BatchSettings;
+}
+
+/** The Batch tab's form, minus the firmware and probe it reads from AppState. */
+export interface BatchSettings {
+  target: string;
+  count: string;
+  protocol: string;
+  speed: number;
+  rearm: "detach" | "immediate";
+  delayMs: string;
+  logPath: string;
+  logJson: boolean;
+  stopOnError: boolean;
+  serialAddress: string;
+  serialFormat: string;
+  serialStart: string;
+  serialStep: string;
+  serialEncoding: "ascii" | "u32le" | "u32be" | "u64le";
+  serialWidth: string;
 }
 
 // ── Profiles ─────────────────────────────────────────────────────────────────
@@ -216,4 +239,63 @@ export interface ProfileSummary {
 export interface MemoryRead {
   address: number;
   bytes: number[];
+}
+
+// ── Batch (production) mode ──────────────────────────────────────────────────
+
+/** One board of a batch run. */
+export interface BatchUnit {
+  index: number;
+  status: "passed" | "failed";
+  /** Serial stamped into this board, when serial programming is on. */
+  serial: string | null;
+  target: string | null;
+  bytes_flashed: number;
+  verified: boolean;
+  duration_ms: number;
+  started_unix_ms: number;
+  message: string;
+}
+
+export interface BatchReport {
+  units: BatchUnit[];
+  passed: number;
+  failed: number;
+  duration_ms: number;
+  stop_reason: string;
+  log_path: string | null;
+}
+
+/** Batch progress pushed on the `batch:event` channel. */
+export type BatchEventDto =
+  | { type: "WaitingForDetach"; index: number }
+  | { type: "WaitingForAttach"; index: number }
+  | { type: "UnitStarted"; index: number }
+  | { type: "UnitFinished"; unit: BatchUnit }
+  | { type: "Finished"; passed: number; failed: number; stop_reason: string };
+
+/** What the Batch panel sends to `start_batch`. */
+export interface BatchOptions {
+  path: string;
+  baseAddress: number | null;
+  probeId: string | null;
+  target: string;
+  protocol: string;
+  speed: number;
+  verify: boolean;
+  reset: boolean;
+  chipErase: boolean;
+  count: number | null;
+  rearm: "detach" | "immediate";
+  stopOnError: boolean;
+  delayMs: number;
+  logPath: string | null;
+  logJson: boolean;
+  /** Serial programming is off unless an address is given. */
+  serialAddress: number | null;
+  serialFormat: string;
+  serialStart: number;
+  serialStep: number;
+  serialEncoding: "ascii" | "u32le" | "u32be" | "u64le";
+  serialWidth: number;
 }
