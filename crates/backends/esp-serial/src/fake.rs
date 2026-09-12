@@ -25,6 +25,8 @@ pub struct FakeLink {
     /// Set once `reset` has been called, so a test can assert the target was
     /// actually let out of the bootloader.
     pub reset_count: u32,
+    /// How many times the session has had to bring the bootloader back up.
+    pub resync_count: u32,
     pub closed: bool,
     /// When set, the next command of this kind fails, for error-path tests.
     pub fail_next_write: bool,
@@ -41,6 +43,7 @@ impl FakeLink {
             chip: chip.into(),
             flash: Arc::new(Mutex::new(vec![0xFF; flash_size as usize])),
             reset_count: 0,
+            resync_count: 0,
             closed: false,
             fail_next_write: false,
         }
@@ -88,7 +91,12 @@ impl EspLink for FakeLink {
         Ok(())
     }
 
-    fn write(&mut self, offset: u32, data: &[u8]) -> Result<(), FlashError> {
+    fn write(
+        &mut self,
+        offset: u32,
+        data: &[u8],
+        progress: &mut dyn FnMut(usize),
+    ) -> Result<(), FlashError> {
         if self.fail_next_write {
             self.fail_next_write = false;
             return Err(FlashError::ProgramError(
@@ -110,6 +118,16 @@ impl EspLink for FakeLink {
             }
             flash[start + i] = *byte;
         }
+        // Real hardware reports progress as the write runs; reporting once at
+        // the end is enough to keep the accounting honest here.
+        progress(data.len());
+        Ok(())
+    }
+
+    /// A real link reconnects here. Nothing to do in memory, but the count
+    /// lets a test assert the session resyncs after a write.
+    fn resync(&mut self) -> Result<(), FlashError> {
+        self.resync_count += 1;
         Ok(())
     }
 
@@ -154,12 +172,12 @@ mod tests {
     #[test]
     fn a_write_cannot_set_bits_back() {
         let mut link = FakeLink::new("esp32s3");
-        link.write(0, &[0x0F]).unwrap();
+        link.write(0, &[0x0F], &mut |_| {}).unwrap();
         // 0x0F -> 0xFF needs bits to go 0 to 1, which only an erase can do.
-        let err = link.write(0, &[0xFF]).unwrap_err();
+        let err = link.write(0, &[0xFF], &mut |_| {}).unwrap_err();
         assert!(matches!(err, FlashError::NorFlashWriteViolation { .. }));
         link.erase_region(0, SECTOR_SIZE).unwrap();
-        link.write(0, &[0xFF]).unwrap();
+        link.write(0, &[0xFF], &mut |_| {}).unwrap();
     }
 
     #[test]

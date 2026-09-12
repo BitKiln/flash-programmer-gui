@@ -58,4 +58,8 @@ ESP chip descriptions, so the JTAG route needs one supplied at runtime with
 bundled with this tool. The serial bootloader route needs nothing extra and is the
 supported path.
 
+The serial route has been exercised on an ESP-WROOM-32 (ESP32): connect, erase,
+program, MD5 verify and reset are all confirmed against the chip. Other Espressif
+parts share the code path but have not been run.
+
 Silicon Labs support has not yet been exercised on hardware.

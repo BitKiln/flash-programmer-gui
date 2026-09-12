@@ -39,9 +39,26 @@ pub trait EspLink: Send {
     /// checks that before calling.
     fn erase_region(&mut self, offset: u32, size: u32) -> Result<(), FlashError>;
 
-    /// Write `data` at `offset`. The caller has already split the image into
-    /// chunks, so this is expected to return reasonably promptly.
-    fn write(&mut self, offset: u32, data: &[u8]) -> Result<(), FlashError>;
+    /// Write `data` at `offset`, reporting bytes completed through
+    /// `progress`.
+    ///
+    /// The whole segment goes in one call rather than being chunked by the
+    /// caller, because the ESP flash protocol ends a write by rebooting the
+    /// chip: a second write would find no bootloader listening. Progress
+    /// therefore comes from inside the write, and the call runs to completion
+    /// once started.
+    fn write(
+        &mut self,
+        offset: u32,
+        data: &[u8],
+        progress: &mut dyn FnMut(usize),
+    ) -> Result<(), FlashError>;
+
+    /// Re-enter download mode after an operation that left it.
+    ///
+    /// Writing ends with a reboot, so anything afterwards -- reading back,
+    /// asking for a checksum -- needs the bootloader brought up again.
+    fn resync(&mut self) -> Result<(), FlashError>;
 
     fn read(&mut self, offset: u32, size: u32) -> Result<Vec<u8>, FlashError>;
 

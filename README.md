@@ -157,8 +157,10 @@ ESP-IDF application image normally goes at `0x10000`, the bootloader at `0x0` or
 the partition table at `0x8000`. Passing the memory-mapped address instead is the single most
 common way to get this wrong.
 
-A full chip erase runs to completion inside one bootloader command, so it **cannot be
-interrupted**; programming and verification are chunked and can. Verification uses the chip's
+Erasing and programming each run to completion inside one bootloader transaction, so neither
+**can be interrupted**; a write ends by rebooting the chip out of download mode, and stopping
+partway would leave it in a state nothing could describe. Verification polls and can stop.
+Verification uses the chip's
 own MD5 rather than reading a multi-megabyte image back over the UART, and only reads bytes back
 when a digest disagrees, to report where.
 
@@ -273,7 +275,7 @@ Set `FLASHGUI_HW_PROBE` as well when more than one probe is attached.
 | Batch mode in the desktop application — Batch tab, live unit table, log file | Done |
 | Serial-number programming — CLI flags, batch integration, desktop Batch tab | Done |
 | Silicon Labs EFR32/EFM32 — through probe-rs and J-Link | Untested on hardware |
-| ESP32 over the serial ROM bootloader — `esp:` backend, CLI and desktop | Untested on hardware |
+| ESP32 over the serial ROM bootloader — `esp:` backend, CLI and desktop | Verified on an ESP-WROOM-32 |
 | Runtime chip descriptions (`--target-yaml`) for parts probe-rs lacks | Done |
 | OpenOCD backend | Planned (v0.5) |
 

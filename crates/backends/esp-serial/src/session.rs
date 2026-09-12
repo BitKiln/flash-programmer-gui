@@ -21,12 +21,6 @@ use md5::{Digest, Md5};
 
 use crate::link::{check_sector_alignment, EspLink, SECTOR_SIZE};
 
-/// How much is written between cancellation polls.
-///
-/// Small enough that Stop feels immediate on a slow UART, large enough not to
-/// pay per-command overhead on every kilobyte.
-const WRITE_CHUNK: usize = 64 * 1024;
-
 /// How much is read back at a time when a verify falls back to comparing bytes.
 const READ_CHUNK: u32 = 32 * 1024;
 
@@ -139,7 +133,11 @@ impl FlashSession for EspSession {
     /// command with no poll point, so it is reported as uninterruptible rather
     /// than offering a button that would do nothing.
     fn can_interrupt(&self, stage: FlashStage) -> bool {
-        matches!(stage, FlashStage::Programming | FlashStage::Verifying)
+        // Programming is one bootloader transaction that ends in a reboot;
+        // stopping partway would leave the chip in a state neither we nor the
+        // operator could describe. Only verification polls often enough to
+        // stop cleanly.
+        matches!(stage, FlashStage::Verifying)
     }
 
     fn erase_all(&mut self, cb: Option<&dyn ProgressCallback>) -> Result<(), FlashError> {
@@ -219,25 +217,31 @@ impl FlashSession for EspSession {
         for segment in segments {
             self.check_range(segment.start_address, segment.data.len() as u32)?;
 
-            for (i, chunk) in segment.data.chunks(WRITE_CHUNK).enumerate() {
-                if self.cancelled(cb) {
-                    return Err(FlashError::OperationCancelled);
-                }
-                let offset = segment.start_address + (i * WRITE_CHUNK) as u32;
-                self.link.write(offset, chunk)?;
-                written += chunk.len() as u64;
-                self.emit(
-                    cb,
-                    FlashEvent::Progress(ProgressMetrics::new(
+            if self.cancelled(cb) {
+                return Err(FlashError::OperationCancelled);
+            }
+
+            let offset = segment.start_address;
+            let done_before = written;
+            let mut report = |bytes: usize| {
+                let so_far = done_before + bytes as u64;
+                if let Some(cb) = cb {
+                    cb.on_event(FlashEvent::Progress(ProgressMetrics::new(
                         FlashStage::Programming,
-                        written,
+                        so_far,
                         total,
                         started.elapsed().as_millis() as u64,
                         offset,
                         format!("Wrote 0x{offset:X}"),
-                    )),
-                );
-            }
+                    )));
+                }
+            };
+            self.link.write(offset, &segment.data, &mut report)?;
+            written += segment.data.len() as u64;
+
+            // The write ended by rebooting the chip out of download mode, so
+            // bring the bootloader back up before anything else speaks to it.
+            self.link.resync()?;
         }
 
         self.emit(
@@ -425,7 +429,7 @@ mod tests {
     fn a_full_erase_does_not_pretend_to_be_interruptible() {
         let s = session();
         assert!(!s.can_interrupt(FlashStage::Erasing));
-        assert!(s.can_interrupt(FlashStage::Programming));
+        assert!(!s.can_interrupt(FlashStage::Programming));
         assert!(s.can_interrupt(FlashStage::Verifying));
     }
 
