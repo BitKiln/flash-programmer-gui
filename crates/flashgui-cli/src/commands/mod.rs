@@ -14,8 +14,8 @@ use std::sync::{Arc, Mutex};
 
 use crate::cli::{parse_address, Cli, FlashArgs, Protocol};
 use crate::exit_codes::CliError;
-use flash_core::error::FlashError;
 use flash_backend_mock::{FaultInjector, MockFlashMemory, MockFlashSession};
+use flash_core::error::FlashError;
 use flash_core::traits::{FlashBackend, FlashSession};
 use flash_core::types::{ConnectionConfig, Transport};
 
@@ -84,8 +84,12 @@ pub fn resolve_flash_params(cli: &Cli, args: &FlashArgs) -> Result<ResolvedFlash
             .and_then(|p| p.probe_id().map(ToString::to_string))
     });
 
-    let (probe, transport) =
-        resolve_transport(probe.as_deref(), args.port.as_deref(), args.baud)?;
+    let (probe, transport) = resolve_transport(
+        probe.as_deref(),
+        args.port.as_deref(),
+        args.baud,
+        args.openocd.as_deref(),
+    )?;
 
     let interface = args
         .interface
@@ -165,27 +169,48 @@ pub fn resolve_flash_params(cli: &Cli, args: &FlashArgs) -> Result<ResolvedFlash
 
 /// Resolves the probe identifier and transport from the connection flags.
 ///
-/// `--port COM7` is shorthand for `--probe esp:COM7`: the registry routes on
-/// the scheme, so a serial target needs no separate code path. `--baud` only
-/// means something once the connection is a serial one, and saying so is more
-/// use than silently ignoring it.
+/// `--port COM7` is shorthand for `--probe esp:COM7` and `--openocd 6666` for
+/// `--probe openocd:6666`: the registry routes on the scheme, so neither
+/// transport needs a separate code path here. `--baud` only means something
+/// once the connection is a serial one, and saying so is more use than
+/// silently ignoring it.
 pub fn resolve_transport(
     probe: Option<&str>,
     port: Option<&str>,
     baud: Option<u32>,
+    openocd: Option<&str>,
 ) -> Result<(Option<String>, Transport), CliError> {
-    let probe_id = match (port, probe) {
-        (Some(port), _) => Some(format!("esp:{port}")),
-        (None, Some(probe)) => Some(probe.to_string()),
-        (None, None) => None,
+    let probe_id = match (port, openocd, probe) {
+        (Some(port), _, _) => Some(format!("esp:{port}")),
+        (None, Some(endpoint), _) => Some(format!("openocd:{endpoint}")),
+        (None, None, Some(probe)) => Some(probe.to_string()),
+        (None, None, None) => None,
     };
 
-    let is_serial = probe_id
-        .as_deref()
-        .map(|id| id.starts_with("esp:"))
-        .unwrap_or(false);
+    let scheme_is = |scheme: &str| {
+        probe_id
+            .as_deref()
+            .map(|id| id.starts_with(scheme))
+            .unwrap_or(false)
+    };
 
-    if !is_serial {
+    if scheme_is("openocd:") {
+        if baud.is_some() {
+            return Err(CliError::InvalidArgsOrProfile(
+                "--baud applies to a serial bootloader connection, not to OpenOCD: \
+                 the wire and its speed come from OpenOCD's own configuration"
+                    .to_string(),
+            ));
+        }
+        let endpoint = probe_id
+            .as_deref()
+            .and_then(|id| id.strip_prefix("openocd:"))
+            .unwrap_or("")
+            .to_string();
+        return Ok((probe_id, Transport::Rpc { endpoint }));
+    }
+
+    if !scheme_is("esp:") {
         if baud.is_some() {
             return Err(CliError::InvalidArgsOrProfile(
                 "--baud applies to a serial bootloader connection; pass --port <PORT>, \
@@ -300,15 +325,12 @@ pub fn open_session(
                         let mut mem = MockFlashMemory::from_target(target);
                         mem.data = data;
                         let fault_injector = Arc::new(Mutex::new(FaultInjector::new()));
-                        let mut s = MockFlashSession::new_with_memory(
-                            target.clone(),
-                            mem,
-                            fault_injector,
-                        );
+                        let mut s =
+                            MockFlashSession::new_with_memory(target.clone(), mem, fault_injector);
                         if let Ok(probes) = backend.list_probes() {
-                            s.probe_info = probes.into_iter().find(|p| {
-                                config.probe_id.as_deref() == Some(&p.identifier)
-                            });
+                            s.probe_info = probes
+                                .into_iter()
+                                .find(|p| config.probe_id.as_deref() == Some(&p.identifier));
                         }
                         let ram_backing =
                             mock_ram_backing_file_path(&target.name, config.probe_id.as_deref());
@@ -329,14 +351,11 @@ pub fn open_session(
 }
 
 /// Persists non-volatile mock flash memory to disk after erase or program operations.
-pub fn persist_mock_session(
-    session: &mut dyn FlashSession,
-    mock: bool,
-    probe_id: Option<&str>,
-) {
+pub fn persist_mock_session(session: &mut dyn FlashSession, mock: bool, probe_id: Option<&str>) {
     if mock {
-        let target_meta =
-            session.target_info().map(|t| (t.flash_base, t.flash_size, t.name.clone()));
+        let target_meta = session
+            .target_info()
+            .map(|t| (t.flash_base, t.flash_size, t.name.clone()));
         if let Some((flash_base, flash_size, target_name)) = target_meta {
             if let Ok(data) = session.read_memory(flash_base, flash_size) {
                 let backing = mock_backing_file_path(&target_name, probe_id);

@@ -1544,6 +1544,7 @@ version = "0.1.0"
 dependencies = [
  "flash-backend-esp-serial",
  "flash-backend-mock",
+ "flash-backend-openocd",
  "flash-backend-probe-rs",
  "flash-core",
 ]

@@ -69,7 +69,8 @@ pub fn handle_flash(
     };
 
     // 5. Execute flash lifecycle via FlashManager
-    let result = FlashManager::execute_flash(session.as_mut(), &firmware, &options, Some(&callback));
+    let result =
+        FlashManager::execute_flash(session.as_mut(), &firmware, &options, Some(&callback));
 
     let return_val = match result {
         Ok(res) => {

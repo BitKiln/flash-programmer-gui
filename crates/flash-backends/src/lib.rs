@@ -36,6 +36,9 @@ pub fn default_registry_with_target_descriptions(
     #[cfg(feature = "esp-serial")]
     registry.register(Box::new(flash_backend_esp_serial::EspSerialBackend::new()));
 
+    #[cfg(feature = "openocd")]
+    registry.register(Box::new(flash_backend_openocd::OpenOcdBackend::new()));
+
     #[cfg(feature = "mock-probe")]
     registry.register(Box::new(flash_backend_mock::MockProbeBackend::new()));
 
@@ -127,6 +130,14 @@ mod tests {
         let registry = default_registry();
         let backend = registry.route(Some("esp:COM7")).unwrap();
         assert_eq!(backend.name(), "esp-serial");
+    }
+
+    #[cfg(feature = "openocd")]
+    #[test]
+    fn an_openocd_identifier_routes_to_the_openocd_backend() {
+        let registry = default_registry();
+        let backend = registry.route(Some("openocd:127.0.0.1:6666")).unwrap();
+        assert_eq!(backend.name(), "openocd");
     }
 
     #[cfg(feature = "mock-probe")]

@@ -40,7 +40,14 @@ export function ConnectionPanel() {
     saveProfile,
   } = useFlashProgrammer();
 
-  const [mode, setMode] = useState<"hardware" | "serial" | "simulator">("hardware");
+  const [mode, setMode] = useState<
+    "hardware" | "serial" | "openocd" | "simulator"
+  >("hardware");
+
+  // Where a running OpenOCD is listening. Only meaningful in "openocd" mode;
+  // 6666 is the TCL port OpenOCD serves unless its configuration says
+  // otherwise.
+  const [endpoint, setEndpoint] = useState("127.0.0.1:6666");
   // Empty means "identify the chip on connect". Never guess a part number:
   // a wrong one attaches happily and only misbehaves when erasing or writing.
   const [target, setTarget] = useState("");
@@ -143,6 +150,7 @@ export function ConnectionPanel() {
     (p) =>
       !p.identifier.startsWith("mock:") &&
       !p.identifier.startsWith("esp:") &&
+      !p.identifier.startsWith("openocd:") &&
       p.probe_type !== "VirtualMock"
   );
   const serialProbes = state.probes.filter((p) =>
@@ -164,8 +172,25 @@ export function ConnectionPanel() {
   // being configured.
   const isSerial = mode === "serial";
 
+  // OpenOCD's own configuration chooses the adapter, the wire and the clock
+  // before it starts listening, so this program has nothing to configure
+  // about them and says so by not offering the controls.
+  const isOpenOcd = mode === "openocd";
+
+  // In OpenOCD mode the identifier comes from the endpoint field rather than
+  // from a list: nothing can enumerate OpenOCD processes, and a socket that
+  // answers is not proof an adapter is attached.
+  useEffect(() => {
+    if (!isOpenOcd) return;
+    const identifier = `openocd:${endpoint.trim()}`;
+    if (state.selectedProbe !== identifier) {
+      dispatch({ type: "SELECT_PROBE", probeId: identifier });
+    }
+  }, [isOpenOcd, endpoint, state.selectedProbe, dispatch]);
+
   // Auto-select first probe when switching modes or when probes update
   useEffect(() => {
+    if (isOpenOcd) return;
     if (displayedProbes.length > 0) {
       const currentInList = displayedProbes.some(
         (p) => p.identifier === state.selectedProbe
@@ -183,7 +208,7 @@ export function ConnectionPanel() {
       // attached.
       dispatch({ type: "SELECT_PROBE", probeId: null });
     }
-  }, [mode, displayedProbes, state.selectedProbe, dispatch]);
+  }, [mode, isOpenOcd, displayedProbes, state.selectedProbe, dispatch]);
 
   const handleConnect = async () => {
     setError(null);
@@ -219,14 +244,18 @@ export function ConnectionPanel() {
               ? "bg-green-950 text-green-400 border border-green-800"
               : mode === "serial"
                 ? "bg-sky-950 text-sky-400 border border-sky-800"
-                : "bg-amber-950 text-amber-400 border border-amber-800"
+                : mode === "openocd"
+                  ? "bg-violet-950 text-violet-400 border border-violet-800"
+                  : "bg-amber-950 text-amber-400 border border-amber-800"
           }`}
         >
           {mode === "hardware"
             ? "PROBE-RS HARDWARE"
             : mode === "serial"
               ? "ESP SERIAL"
-              : "SIMULATOR"}
+              : mode === "openocd"
+                ? "OPENOCD"
+                : "SIMULATOR"}
         </span>
       </div>
 
@@ -260,7 +289,7 @@ export function ConnectionPanel() {
       </div>
 
       {/* Mode Switcher: what is on the other end */}
-      <div className="grid grid-cols-3 gap-1 p-1 bg-bg-primary rounded border border-gray-700">
+      <div className="grid grid-cols-2 gap-1 p-1 bg-bg-primary rounded border border-gray-700">
         <button
           type="button"
           onClick={() => setMode("hardware")}
@@ -287,6 +316,18 @@ export function ConnectionPanel() {
         </button>
         <button
           type="button"
+          onClick={() => setMode("openocd")}
+          className={`py-1 text-xs font-semibold rounded transition-colors ${
+            mode === "openocd"
+              ? "bg-violet-600 text-white shadow-sm"
+              : "text-gray-400 hover:text-gray-200"
+          }`}
+          title="A running OpenOCD, over its TCL port — whatever adapter and target it is configured for"
+        >
+          🔗 OpenOCD
+        </button>
+        <button
+          type="button"
           onClick={() => setMode("simulator")}
           className={`py-1 text-xs font-semibold rounded transition-colors ${
             mode === "simulator"
@@ -298,7 +339,39 @@ export function ConnectionPanel() {
           🧪 Simulator
         </button>
       </div>
-      {/* Probe Selection */}
+      {/* Where to connect. In OpenOCD mode this is an address rather than a
+          choice from a list, because nothing can enumerate OpenOCD
+          processes. */}
+      {isOpenOcd ? (
+        <div>
+          <label className="block text-xs text-gray-400 mb-1" htmlFor="openocd-endpoint">
+            OpenOCD TCL endpoint
+          </label>
+          <input
+            id="openocd-endpoint"
+            type="text"
+            value={endpoint}
+            onChange={(e) => setEndpoint(e.target.value)}
+            placeholder="127.0.0.1:6666"
+            className="w-full bg-bg-primary border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200 font-mono focus:border-accent-red focus:outline-none"
+          />
+          <p className="text-xs text-gray-500 mt-1.5">
+            Start OpenOCD with its TCL port enabled — it listens on{" "}
+            <code>6666</code> by default. The adapter, the wire and the clock
+            come from OpenOCD&apos;s own configuration.
+          </p>
+          <p className="text-xs text-gray-500 mt-1.5">
+            Programming needs OpenOCD on <strong>this machine</strong>: it
+            opens the image file itself, so a path here means nothing to a
+            process elsewhere. Reading and erasing work over the network.
+          </p>
+          {state.selectedProbe && (
+            <p className="text-xs text-gray-500 mt-1.5 font-mono truncate">
+              ID: {state.selectedProbe}
+            </p>
+          )}
+        </div>
+      ) : (
       <div>
         <label className="block text-xs text-gray-400 mb-1">
           {mode === "hardware"
@@ -387,6 +460,7 @@ export function ConnectionPanel() {
           </p>
         )}
       </div>
+      )}
 
       {/* Target MCU */}
       <div>
@@ -446,7 +520,7 @@ export function ConnectionPanel() {
       {/* What the wire actually is. A serial bootloader has no wire
           protocol and no debug clock, so those controls are replaced rather
           than left on screen configuring nothing. */}
-      {isSerial ? (
+      {isOpenOcd ? null : isSerial ? (
         <div>
           <label className="block text-xs text-gray-400 mb-1">Baud rate</label>
           <select
