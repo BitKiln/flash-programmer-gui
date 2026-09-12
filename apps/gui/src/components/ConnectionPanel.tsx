@@ -217,10 +217,16 @@ export function ConnectionPanel() {
           className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
             mode === "hardware"
               ? "bg-green-950 text-green-400 border border-green-800"
-              : "bg-amber-950 text-amber-400 border border-amber-800"
+              : mode === "serial"
+                ? "bg-sky-950 text-sky-400 border border-sky-800"
+                : "bg-amber-950 text-amber-400 border border-amber-800"
           }`}
         >
-          {mode === "hardware" ? "PROBE-RS HARDWARE" : "SIMULATOR"}
+          {mode === "hardware"
+            ? "PROBE-RS HARDWARE"
+            : mode === "serial"
+              ? "ESP SERIAL"
+              : "SIMULATOR"}
         </span>
       </div>
 
@@ -295,7 +301,11 @@ export function ConnectionPanel() {
       {/* Probe Selection */}
       <div>
         <label className="block text-xs text-gray-400 mb-1">
-          {mode === "hardware" ? "Physical Debug Probe" : "Virtual Probe Model"}
+          {mode === "hardware"
+            ? "Physical Debug Probe"
+            : mode === "serial"
+              ? "Serial Port"
+              : "Virtual Probe Model"}
         </label>
         <div className="flex gap-2">
           <select
@@ -312,7 +322,9 @@ export function ConnectionPanel() {
               <option value="">
                 {mode === "hardware"
                   ? "No hardware probe detected"
-                  : "No simulation probes"}
+                  : mode === "serial"
+                    ? "No serial ports found"
+                    : "No simulation probes"}
               </option>
             )}
             {displayedProbes.map((p) => (

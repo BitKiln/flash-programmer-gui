@@ -5,9 +5,14 @@ import { ConsoleOutput } from "./components/ConsoleOutput";
 import { MemoryViewer } from "./components/MemoryViewer";
 import { BatchPanel } from "./components/BatchPanel";
 import { useState } from "react";
+import { useFlashTelemetry } from "./hooks/useFlashProgrammer";
 
 export function App() {
   const [tab, setTab] = useState<"firmware" | "memory" | "batch">("firmware");
+
+  // Exactly one subscriber for the whole app; every panel shares the reducer
+  // these events land in.
+  useFlashTelemetry();
 
   return (
     <div className="h-screen w-screen flex flex-col overflow-hidden">

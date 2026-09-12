@@ -2,25 +2,46 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { useEffect } from "react";
 import { AppProvider, useAppContext } from "../state/AppContext";
-import { useFlashProgrammer } from "../hooks/useFlashProgrammer";
+import {
+  useFlashProgrammer,
+  useFlashTelemetry,
+} from "../hooks/useFlashProgrammer";
 import type { FlashEventDto } from "../types";
 
 const invoke = vi.fn();
-const listeners = new Map<string, (event: { payload: FlashEventDto }) => void>();
+type Handler = (event: { payload: FlashEventDto }) => void;
+const subscriptions: Array<{ channel: string; handler: Handler }> = [];
+
+/** Channels with at least one subscriber. */
+const channels = () => new Set(subscriptions.map((s) => s.channel));
+
+/** Delivers an event the way the backend would: to every subscriber. */
+function emit(channel: string, payload: FlashEventDto) {
+  for (const s of subscriptions.filter((s) => s.channel === channel)) {
+    s.handler({ payload });
+  }
+}
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...args: unknown[]) => invoke(...args),
 }));
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: (channel: string, handler: (event: { payload: FlashEventDto }) => void) => {
-    listeners.set(channel, handler);
-    return Promise.resolve(() => listeners.delete(channel));
+  listen: (channel: string, handler: Handler) => {
+    const entry = { channel, handler };
+    subscriptions.push(entry);
+    return Promise.resolve(() => {
+      const at = subscriptions.indexOf(entry);
+      if (at >= 0) {
+        subscriptions.splice(at, 1);
+      }
+    });
   },
 }));
 
 /// Renders the hook and exposes the pieces of state the assertions need.
 function Harness({ onReady }: { onReady?: (api: ReturnType<typeof useFlashProgrammer>) => void }) {
   const { state } = useAppContext();
+  useFlashTelemetry();
   const api = useFlashProgrammer();
 
   useEffect(() => {
@@ -36,6 +57,12 @@ function Harness({ onReady }: { onReady?: (api: ReturnType<typeof useFlashProgra
   );
 }
 
+/** Another component using the imperative hook, as the real panels do. */
+function Consumer() {
+  useFlashProgrammer();
+  return null;
+}
+
 function renderHook(onReady?: (api: ReturnType<typeof useFlashProgrammer>) => void) {
   return render(
     <AppProvider>
@@ -47,35 +74,59 @@ function renderHook(onReady?: (api: ReturnType<typeof useFlashProgrammer>) => vo
 describe("useFlashProgrammer", () => {
   beforeEach(() => {
     invoke.mockReset();
-    listeners.clear();
+    subscriptions.length = 0;
   });
 
   it("subscribes to the three telemetry channels instead of polling", async () => {
     renderHook();
-    await waitFor(() => expect(listeners.size).toBe(3));
-    expect([...listeners.keys()].sort()).toEqual([
+    await waitFor(() => expect(channels().size).toBe(3));
+    expect([...channels()].sort()).toEqual([
       "flash:log",
       "flash:progress",
       "flash:status",
     ]);
   });
 
+  it("subscribes once however many components consume the hook", async () => {
+    render(
+      <AppProvider>
+        <Harness />
+        <Consumer />
+        <Consumer />
+      </AppProvider>
+    );
+
+    await waitFor(() => expect(channels().size).toBe(3));
+    // One subscription per channel. Any more and each event is handled once
+    // per mounted component, which puts three copies of every line in the
+    // console.
+    expect(subscriptions.length).toBe(3);
+
+    emit("flash:log", { type: "Warning", message: "Sector already erased" });
+
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("logs").textContent!.split("|").filter(
+          (line) => line === "Sector already erased"
+        ).length
+      ).toBe(1)
+    );
+  });
+
   it("applies pushed progress events to state", async () => {
     renderHook();
-    await waitFor(() => expect(listeners.has("flash:progress")).toBe(true));
+    await waitFor(() => expect(channels().has("flash:progress")).toBe(true));
 
-    listeners.get("flash:progress")!({
-      payload: {
-        type: "Progress",
-        stage: "programming",
-        bytes_transferred: 512,
-        total_bytes: 1024,
-        percentage: 50,
-        speed_bps: 4096,
-        elapsed_ms: 120,
-        current_address: 0x08000200,
-        message: "Programming...",
-      },
+    emit("flash:progress", {
+      type: "Progress",
+      stage: "programming",
+      bytes_transferred: 512,
+      total_bytes: 1024,
+      percentage: 50,
+      speed_bps: 4096,
+      elapsed_ms: 120,
+      current_address: 0x08000200,
+      message: "Programming...",
     });
 
     await waitFor(() =>
@@ -85,11 +136,9 @@ describe("useFlashProgrammer", () => {
 
   it("logs pushed warnings", async () => {
     renderHook();
-    await waitFor(() => expect(listeners.has("flash:log")).toBe(true));
+    await waitFor(() => expect(channels().has("flash:log")).toBe(true));
 
-    listeners.get("flash:log")!({
-      payload: { type: "Warning", message: "Sector already erased" },
-    });
+    emit("flash:log", { type: "Warning", message: "Sector already erased" });
 
     await waitFor(() =>
       expect(screen.getByTestId("logs").textContent).toContain(

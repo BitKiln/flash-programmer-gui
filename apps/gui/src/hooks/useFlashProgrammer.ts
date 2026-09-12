@@ -25,10 +25,15 @@ import type {
  * arrives as `flash:progress` / `flash:status` / `flash:log` events pushed by
  * the backend.
  */
-export function useFlashProgrammer() {
-  const { state, dispatch, addLog } = useAppContext();
-
-  // ── Flash telemetry ──────────────────────────────────────────────────────
+/**
+ * Subscribes to the backend's pushed telemetry.
+ *
+ * Call this **once**, at the root. The events land in the shared reducer, so a
+ * subscription per consuming component would add every log line once per
+ * mounted component -- three copies of each line on the firmware tab.
+ */
+export function useFlashTelemetry() {
+  const { dispatch, addLog } = useAppContext();
 
   const handleEvent = useCallback(
     (event: FlashEventDto) => {
@@ -106,6 +111,15 @@ export function useFlashProgrammer() {
       unlisteners.forEach((stop) => stop());
     };
   }, []);
+}
+
+/**
+ * Custom hook wrapping all Tauri IPC invoke calls.
+ *
+ * Telemetry is not subscribed to here: see `useFlashTelemetry`.
+ */
+export function useFlashProgrammer() {
+  const { state, dispatch, addLog } = useAppContext();
 
   // ── Probe Discovery ──────────────────────────────────────────────────────
 
