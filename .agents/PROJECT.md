@@ -2,10 +2,11 @@
 
 ## Architecture
 The project is organized as a Cargo workspace with decoupled Rust crates and a modern Tauri v2 + React/TypeScript desktop application:
-1. `crates/firmware-parser`: Zero-dependency, pure Rust library for parsing Intel HEX (`.hex`) and raw binary (`.bin`) firmware images, consolidating memory segments, detecting gaps, computing checksums (CRC32, MD5, SHA-256), and extracting entry points.
+1. `crates/firmware-parser`: Zero-dependency, pure Rust library for parsing Intel HEX (`.hex`), raw binary (`.bin`), and ELF (`.elf`/`.axf`/`.out`, PT_LOAD program headers by physical address) firmware images, consolidating memory segments, detecting gaps, computing checksums (CRC32, MD5, SHA-256), and extracting entry points.
 2. `crates/flash-core`: Core embedded probe abstraction layer providing `FlashBackend` and `FlashSession` traits, live `probe-rs` backend (ST-Link, CMSIS-DAP, J-Link), and in-memory Virtual/Mock Probe backend with authentic NOR flash physics (0xFF erased, 1->0 write limits), STM32 sector profiles, delay simulation, and deterministic fault injection.
 3. `crates/flashgui-cli`: Headless CLI companion providing device discovery, erasing, programming, verification, reset, and TOML profile management for CI and scripting.
-4. `src-tauri` & `frontend`: Desktop GUI application combining Tauri v2 Rust IPC backend and React 18 + TypeScript 5 frontend with real-time probe polling, firmware inspector, flashing controls, telemetry HUD, and timestamped developer console.
+4. `crates/e2e-tests`: Opaque-box end-to-end suite that spawns the shipped `flashgui-cli` binary in an isolated sandbox; Tiers 1-4 run against the mock backend, Tier 5 against real hardware behind an env-var opt-in.
+5. `apps/gui` (`src-tauri` + React frontend): Desktop GUI application combining Tauri v2 Rust IPC backend and React 18 + TypeScript 5 frontend with real-time probe polling, firmware inspector, flashing controls, telemetry HUD, and timestamped developer console.
 
 ```
        ┌───────────────────────┐         ┌─────────────────────────┐
@@ -64,14 +65,17 @@ The project is organized as a Cargo workspace with decoupled Rust crates and a m
 | F31 | CLI Reusable Profiles (`profile`) | Save, load, list, and apply named configuration profiles (TOML format) | M3 | explorer_survey_3 |
 | F32 | CLI Mock Backend Flag (`--mock`) | Enable headless CI testing against Virtual Probe without physical hardware | M3 | explorer_survey_3 |
 | F33 | CLI Deterministic Exit Codes | Standardized status codes (0=success, 1=verify fail, 2=conn error, 3=parse error, etc.) | M3 | explorer_survey_3 |
-| F34 | Tauri Desktop Backend & IPC | 17 typed Tauri IPC commands bridging frontend to flash-core & parser | M4 | explorer_survey_3 |
+| F34 | Tauri Desktop Backend & IPC | Typed Tauri IPC commands bridging frontend to flash-core & parser | M4 | explorer_survey_3 |
 | F35 | Desktop Connection Panel | Probe selector with auto-refresh, chip selector, SWD/JTAG, speed | M4 | explorer_survey_3 |
 | F36 | Desktop Firmware Panel | Drag-and-drop loader, memory segment inspector table, recent files | M4 | explorer_survey_3 |
 | F37 | Desktop Flash Options & Controls | Program / Erase / Verify / Reset controls with verify/reset checkboxes | M4 | explorer_survey_3 |
 | F38 | Desktop Progress & Telemetry HUD | Animated progress bar, byte counters, transfer speed, elapsed time | M4 | explorer_survey_3 |
 | F39 | Desktop Timestamped Console | Scrollable developer log console capturing probe, erase, write, verify logs | M4 | explorer_survey_3 |
 | F40 | Desktop Cooperative Cancellation | Cancel ongoing flash operations cleanly via cancellation token | M4 | explorer_survey_3 |
-| F41 | Comprehensive E2E Test Suite | 4-Tier requirement-driven opaque-box E2E test suite (Tiers 1-4) | E2E | Top-Level |
+| F41 | Comprehensive E2E Test Suite | Opaque-box E2E suite in `crates/e2e-tests` driving the shipped CLI binary (Tiers 1-4 mock, Tier 5 hardware-gated) | E2E | Top-Level |
+| F43 | Batch / Production Mode | `flash-core::batch` runner plus the `batch` CLI command: repeat units, detach/attach re-arm, per-unit pass/fail log (CSV or JSON), continue-or-stop on failure | M3 | Top-Level |
+| F44 | Desktop Batch Mode | Batch tab driving `start_batch`, live per-unit table, `batch:event` telemetry, production log file | M4 | Top-Level |
+| F45 | Serial-Number Programming | `flash-core::serial` (template rendering, ASCII/integer encodings, allocator, write plus read-back) wired into `flash`, `batch`, and the desktop Batch tab | M3 | Top-Level |
 | F42 | Adversarial Hardening (Tier 5) | White-box adversarial test suite attacking edge cases and stress limits | M5 | Top-Level |
 
 ## Milestones
@@ -79,14 +83,14 @@ The project is organized as a Cargo workspace with decoupled Rust crates and a m
 |---|------|-------|-------------|--------|
 | M1 | Firmware Parser Crate | Implement `firmware-parser` (HEX/BIN, segments, checksums, entry points, unit tests) | none | DONE |
 | M2 | Flash Core & Probe Abstraction | Implement `flash-core` (traits, live probe-rs, virtual mock probe, fault injection, tests) | M1 (models) | DONE |
-| M3 | CLI Companion & Profiles | Implement `flashgui-cli` (commands, flags, profiles, headless mock CI tests) | M1, M2 | PLANNED |
-| M4 | Desktop Application GUI | Implement `src-tauri` IPC & React/TS frontend (panels, controls, console, Vitest) | M1, M2 | PLANNED |
-| M5 | Final E2E Integration & Hardening | Phase 1: Pass 100% E2E test suite (Tiers 1-4); Phase 2: Tier 5 adversarial hardening | M1, M2, M3, M4, E2E | PLANNED |
+| M3 | CLI Companion & Profiles | Implement `flashgui-cli` (commands, flags, profiles, headless mock CI tests) | M1, M2 | DONE |
+| M4 | Desktop Application GUI | Implement `src-tauri` IPC & React/TS frontend (panels, controls, console, Vitest) | M1, M2 | DONE |
+| M5 | Final E2E Integration & Hardening | Phase 1: Pass 100% E2E test suite (Tiers 1-4) - DONE; Phase 2: Tier 5 adversarial hardening (F42) - outstanding | M1, M2, M3, M4, E2E | IN PROGRESS |
 
 ## Parallel Dual-Track: E2E Testing Track
 | # | Name | Scope | Dependencies | Status |
 |---|------|-------|-------------|--------|
-| E2E | Opaque-Box E2E Test Suite | Requirement-driven test harness and Tiers 1-4 test suites (TEST_READY.md) | none (black-box) | DONE |
+| E2E | Opaque-Box E2E Test Suite | Harness and Tier 1-4 suites in `crates/e2e-tests`, spawning the `flashgui-cli` binary; Tier 5 runs against real hardware behind `FLASHGUI_HW_TARGET` | none (black-box) | DONE |
 
 ## Interface Contracts
 
@@ -138,109 +142,83 @@ pub trait FlashSession: Send {
 ```
 
 ### 3. Tauri IPC Commands (`src-tauri` -> React Frontend)
-- `list_probes()` -> `Vec<ProbeInfo>`
-- `connect_target(config: ConnectionConfig)` -> `ConnectionStatus`
-- `disconnect_target()` -> `()`
-- `parse_firmware(path: String, base_address: Option<u32>)` -> `FirmwareMetadata`
-- `execute_flash(request: FlashRequest)` -> `FlashResult`
-- `erase_flash(full_chip: bool)` -> `()`
-- `verify_flash(path: String)` -> `VerifyReport`
-- `reset_target(halt: bool)` -> `()`
-- `cancel_operation()` -> `()`
-- `list_profiles()` -> `Vec<ProfileSummary>`
-- `save_profile(profile: FlashProfile)` -> `()`
-- `load_profile(name: String)` -> `FlashProfile`
-- Events emitted: `flash:progress` (`ProgressEvent`), `flash:log` (`LogEvent`), `flash:status` (`StatusEvent`).
+Implemented and registered in `apps/gui/src-tauri/src/lib.rs`:
+- `list_probes()` -> `Vec<ProbeInfoDto>`
+- `connect_probe(probe_id, target, protocol, speed)` -> `TargetInfoDto`
+- `auto_detect_target(probe_id, protocol, speed)` -> `TargetInfoDto`
+- `disconnect_probe()` -> `String`
+- `load_firmware(path, base_address)` -> `FirmwareInfoDto`
+- `flash_firmware(path, base_address, verify, reset, chip_erase)` -> `FlashResultDto`
+- `erase_chip()` -> `String`
+- `verify_firmware(path, base_address)` -> `VerifyResultDto`
+- `reset_target(halt)` -> `String`
+
+Plus `cancel_operation`, `read_memory`, `read_firmware_window`, `save_memory_region`,
+`list_profiles`, `load_profile`, `save_profile` and `delete_profile`.
+
+Progress telemetry is **pushed**: the backend emits `flash:progress`, `flash:status` and `flash:log`
+as an operation proceeds. The frontend subscribes before it issues the command that produces the
+events, so there is no polling fallback.
 
 ## Code Layout
 ```
-c:/web_applications/open-source/embedded/flash_programmer_gui/
-├── Cargo.toml                          # Workspace root manifest
+flash_programmer_gui/
+├── Cargo.toml                          # Workspace root (virtual manifest)
+├── README.md
 ├── crates/
-│   ├── firmware-parser/                # Crate: firmware-parser (M1)
-│   │   ├── Cargo.toml
+│   ├── firmware-parser/                # M1: HEX / BIN / ELF parsing
 │   │   ├── src/
-│   │   │   ├── lib.rs
-│   │   │   ├── hex.rs
-│   │   │   ├── bin.rs
-│   │   │   ├── checksum.rs
-│   │   │   ├── segment.rs
-│   │   │   ├── metadata.rs
-│   │   │   └── error.rs
+│   │   │   ├── lib.rs                  # parse_file, detect_format
+│   │   │   ├── hex.rs  bin.rs  elf.rs  # per-format readers
+│   │   │   ├── segment.rs  metadata.rs  checksum.rs  error.rs
 │   │   └── tests/
-│   │       └── golden_vectors.rs
-│   ├── flash-core/                     # Crate: flash-core (M2)
-│   │   ├── Cargo.toml
+│   │       ├── golden_vectors.rs
+│   │       ├── adversarial_stress.rs
+│   │       └── elf_fixture.rs
+│   ├── flash-core/                     # M2: probe abstraction
 │   │   ├── src/
-│   │   │   ├── lib.rs
-│   │   │   ├── traits.rs
-│   │   │   ├── error.rs
-│   │   │   ├── types.rs
-│   │   │   ├── progress.rs
-│   │   │   ├── manager.rs
-│   │   │   ├── live/
-│   │   │   │   └── probe_rs_backend.rs
-│   │   │   └── mock/
-│   │   │       ├── backend.rs
-│   │   │       ├── memory.rs
-│   │   │       ├── fault.rs
-│   │   │       └── profiles.rs
+│   │   │   ├── traits.rs               # FlashBackend / FlashSession
+│   │   │   ├── manager.rs              # FlashManager::execute_flash
+│   │   │   ├── progress.rs  types.rs  error.rs  unified.rs
+│   │   │   ├── live/                   # probe-rs backend + target detection
+│   │   │   └── mock/                   # NOR physics, profiles, fault injection
 │   │   └── tests/
 │   │       ├── mock_integration.rs
-│   │       └── fault_injection.rs
-│   └── flashgui-cli/                   # Crate: flashgui-cli (M3)
-│       ├── Cargo.toml
-│       ├── src/
-│       │   ├── main.rs
-│       │   ├── cli.rs
-│       │   ├── commands/
-│       │   │   ├── devices.rs
-│       │   │   ├── flash.rs
-│       │   │   ├── erase.rs
-│       │   │   ├── verify.rs
-│       │   │   ├── reset.rs
-│       │   │   └── profile.rs
-│       │   └── profile.rs
+│   │       ├── fault_injection.rs
+│   │       └── adversarial_challenge.rs
+│   ├── flashgui-cli/                   # M3: headless CLI
+│   │   ├── src/
+│   │   │   ├── cli.rs  lib.rs  main.rs  output.rs  profile.rs  exit_codes.rs
+│   │   │   └── commands/               # devices, flash, erase, verify, reset, profile
+│   │   └── tests/
+│   │       └── cli_mock_tests.rs
+│   └── e2e-tests/                      # E2E track: opaque-box suite
+│       ├── src/lib.rs                  # sandboxed harness spawning flashgui-cli
 │       └── tests/
-│           └── cli_mock_tests.rs
-├── src-tauri/                          # Tauri v2 Backend (M4)
-│   ├── Cargo.toml
-│   ├── tauri.conf.json
-│   ├── capabilities/
-│   │   └── default.json
-│   └── src/
-│       ├── main.rs
-│       ├── lib.rs
-│       ├── commands.rs
-│       ├── state.rs
-│       └── events.rs
-├── frontend/                           # React 18 + TS Frontend (M4)
-│   ├── package.json
-│   ├── tsconfig.json
-│   ├── vite.config.ts
-│   ├── vitest.config.ts
-│   ├── index.html
-│   └── src/
-│       ├── App.tsx
-│       ├── main.tsx
-│       ├── store/
-│       │   └── useFlashStore.ts
-│       ├── components/
-│       │   ├── ConnectionPanel.tsx
-│       │   ├── FirmwarePanel.tsx
-│       │   ├── FlashingControls.tsx
-│       │   ├── ProgressTelemetry.tsx
-│       │   └── ConsoleOutput.tsx
-│       └── __tests__/
-│           ├── store.test.ts
-│           ├── ConnectionPanel.test.tsx
-│           ├── FirmwarePanel.test.tsx
-│           └── FlashingControls.test.tsx
-└── tests/                              # E2E Testing Track (E2E)
-    ├── e2e_runner.rs                   # Opaque-box E2E test harness
-    ├── test_data/                      # Test hex, bin, profiles
-    ├── tier1_features/
-    ├── tier2_boundaries/
-    ├── tier3_combinations/
-    └── tier4_workloads/
+│           ├── tier1_features.rs
+│           ├── tier2_boundaries.rs
+│           ├── tier3_combinations.rs
+│           ├── tier4_workloads.rs
+│           └── hardware.rs             # #[ignore]d; needs FLASHGUI_HW_TARGET
+├── apps/
+│   └── gui/                            # M4: desktop application
+│       ├── package.json  vite.config.ts  vitest.config.ts  index.html
+│       ├── src/                        # React 18 + TypeScript frontend
+│       │   ├── App.tsx  main.tsx
+│       │   ├── state/AppContext.tsx
+│       │   ├── hooks/useFlashProgrammer.ts
+│       │   ├── components/
+│       │   │   ├── ConnectionPanel.tsx
+│       │   │   ├── FirmwarePanel.tsx
+│       │   │   ├── FlashControls.tsx
+│       │   │   ├── ProgressBar.tsx
+│       │   │   └── ConsoleOutput.tsx
+│       │   └── __tests__/
+│       └── src-tauri/                  # Tauri v2 IPC backend
+│           ├── Cargo.toml  tauri.conf.json  capabilities/
+│           └── src/main.rs  lib.rs  commands.rs  state.rs
+└── tests/
+    ├── fixtures/                       # shared HEX / BIN / ELF / profile fixtures
+    ├── firmware/u575/                  # source of the committed U575 blinky fixture
+    └── generate_fixtures.py
 ```

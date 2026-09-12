@@ -349,3 +349,37 @@ fn test_flash_manager_out_of_bounds_rejection() {
         other => panic!("Unexpected error: {:?}", other),
     }
 }
+
+#[test]
+fn test_mock_session_reports_every_stage_as_interruptible() {
+    // The mock polls the cancellation flag inside erase, program, and verify,
+    // so it advertises all three. A backend that hands a stage to its driver in
+    // one call must say so instead, or the UI offers a Stop that cannot act.
+    use flash_core::progress::FlashStage;
+
+    let backend = MockProbeBackend::new();
+    let session = backend
+        .open_session(&ConnectionConfig {
+            probe_id: Some("mock:stlink-stm32f401re".to_string()),
+            target_name: "STM32F401RE".to_string(),
+            protocol: WireProtocol::Swd,
+            ..ConnectionConfig::default()
+        })
+        .expect("mock session");
+
+    for stage in [
+        FlashStage::Erasing,
+        FlashStage::Programming,
+        FlashStage::Verifying,
+    ] {
+        assert!(
+            session.can_interrupt(stage),
+            "mock should be interruptible during {:?}",
+            stage
+        );
+    }
+
+    // Stages with no work to poll through are not claimed as interruptible.
+    assert!(!session.can_interrupt(FlashStage::Resetting));
+    assert!(!session.can_interrupt(FlashStage::Connecting));
+}

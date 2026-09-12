@@ -2,7 +2,6 @@ pub mod cli;
 pub mod commands;
 pub mod exit_codes;
 pub mod output;
-pub mod profile;
 
 use std::ffi::OsString;
 use std::io::Write;
@@ -10,24 +9,22 @@ use std::io::Write;
 use clap::Parser;
 
 pub use cli::{
-    parse_address, Cli, Commands, EraseArgs, FlashArgs, ProfileSubcommand, Protocol, ResetArgs,
-    VerifyArgs,
+    parse_address, BatchArgs, Cli, Commands, EraseArgs, FlashArgs, ProfileSubcommand, Protocol,
+    Rearm, ResetArgs, VerifyArgs,
 };
 pub use exit_codes::{
     CliError, EXIT_FIRMWARE_PARSE_ERROR, EXIT_FLASH_VERIFY_ERROR, EXIT_INVALID_ARGS_OR_PROFILE,
     EXIT_PROBE_NOT_FOUND, EXIT_SUCCESS, EXIT_TARGET_CONNECTION_ERROR,
 };
-pub use profile::{
+/// Profiles are owned by `flash-core` so the GUI and the CLI share one store.
+pub use flash_core::profile;
+pub use flash_core::profile::{
     delete_profile, list_profiles, load_profile, resolve_profile_path, save_profile, FlashProfile,
     ProfileSummary,
 };
 
 /// Runs the CLI with custom arguments and IO streams, returning the exit code.
-pub fn run_cli_with_io<I, T>(
-    args: I,
-    stdout: &mut dyn Write,
-    stderr: &mut dyn Write,
-) -> i32
+pub fn run_cli_with_io<I, T>(args: I, stdout: &mut dyn Write, stderr: &mut dyn Write) -> i32
 where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
@@ -49,6 +46,9 @@ where
         Commands::Devices => commands::devices::handle_devices(&cli, stdout, stderr),
         Commands::Flash(ref flash_args) => {
             commands::flash::handle_flash(&cli, flash_args, stdout, stderr)
+        }
+        Commands::Batch(ref batch_args) => {
+            commands::batch::handle_batch(&cli, batch_args, stdout, stderr)
         }
         Commands::Erase(ref erase_args) => {
             commands::erase::handle_erase(&cli, erase_args, stdout, stderr)

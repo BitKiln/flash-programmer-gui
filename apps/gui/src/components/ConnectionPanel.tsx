@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useAppContext } from "../state/AppContext";
 import { useFlashProgrammer } from "../hooks/useFlashProgrammer";
+import type { ProfileSummary } from "../types";
 
 const RECENT_TARGETS_KEY = "flashgui.recentTargets";
 const RECENT_LIMIT = 5;
@@ -28,8 +29,15 @@ function saveRecentTargets(targets: string[]) {
 
 export function ConnectionPanel() {
   const { state, dispatch } = useAppContext();
-  const { refreshProbes, connectProbe, disconnectProbe, autoDetectTarget } =
-    useFlashProgrammer();
+  const {
+    refreshProbes,
+    connectProbe,
+    disconnectProbe,
+    autoDetectTarget,
+    listProfiles,
+    loadProfile,
+    saveProfile,
+  } = useFlashProgrammer();
 
   const [mode, setMode] = useState<"hardware" | "simulator">("hardware");
   // Empty means "identify the chip on connect". Never guess a part number:
@@ -41,6 +49,49 @@ export function ConnectionPanel() {
   const [speed, setSpeed] = useState(4000);
   const [isDetecting, setIsDetecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
+  const [selectedProfile, setSelectedProfile] = useState("");
+
+  const refreshProfiles = useCallback(async () => {
+    setProfiles(await listProfiles());
+  }, [listProfiles]);
+
+  useEffect(() => {
+    void refreshProfiles();
+  }, [refreshProfiles]);
+
+  const handleApplyProfile = async (name: string) => {
+    setSelectedProfile(name);
+    if (!name) return;
+    const profile = await loadProfile(name);
+    if (profile) {
+      setTarget(profile.target === "auto" ? "" : profile.target);
+      setProtocol(profile.interface.toLowerCase() === "jtag" ? "Jtag" : "Swd");
+      setSpeed(profile.speed_khz);
+    }
+  };
+
+  const handleSaveProfile = async () => {
+    const name = window.prompt("Save current settings as profile named:");
+    if (!name?.trim()) return;
+    const saved = await saveProfile({
+      name: name.trim(),
+      description: null,
+      target: target.trim() || "auto",
+      probe_id: state.selectedProbe,
+      interface: protocol.toLowerCase() === "jtag" ? "JTAG" : "SWD",
+      speed_khz: speed,
+      firmware_path: state.firmwarePath,
+      base_address: null,
+      verify: state.flashOptions.verify,
+      reset: state.flashOptions.reset,
+      full_chip_erase: state.flashOptions.chipErase,
+    });
+    if (saved) {
+      setSelectedProfile(name.trim());
+      await refreshProfiles();
+    }
+  };
 
   const rememberTarget = (name: string) => {
     setRecentTargets((previous) => {
@@ -132,6 +183,35 @@ export function ConnectionPanel() {
         >
           {mode === "hardware" ? "PROBE-RS HARDWARE" : "SIMULATOR"}
         </span>
+      </div>
+
+      {/* Profiles — the same TOML store the CLI reads */}
+      <div>
+        <label className="block text-xs text-gray-400 mb-1">Profile</label>
+        <div className="flex gap-2">
+          <select
+            aria-label="Profile"
+            className="flex-1 min-w-0 truncate bg-bg-primary border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-accent-red focus:outline-none"
+            value={selectedProfile}
+            onChange={(e) => void handleApplyProfile(e.target.value)}
+          >
+            <option value="">
+              {profiles.length === 0 ? "No saved profiles" : "Select a profile..."}
+            </option>
+            {profiles.map((profile) => (
+              <option key={profile.name} value={profile.name}>
+                {profile.name} ({profile.target})
+              </option>
+            ))}
+          </select>
+          <button
+            onClick={handleSaveProfile}
+            className="shrink-0 px-2.5 py-1.5 bg-bg-tertiary border border-gray-600 rounded text-sm text-gray-300 hover:bg-gray-600 transition-colors"
+            title="Save the current probe, target, interface, speed and options as a profile"
+          >
+            Save
+          </button>
+        </div>
       </div>
 
       {/* Mode Switcher: Hardware vs Simulator */}

@@ -1,11 +1,15 @@
 use serde::Serialize;
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 
-use flash_core::{
-    ConnectionConfig, FlashEvent, FlashManager, FlashStage, LogLevel, ProgramOptions,
-    WireProtocol,
+use firmware_parser::{EntryPointSource, FirmwareFormat};
+use flash_core::batch::{
+    run_batch_with, BatchConfig, BatchEvent, BatchObserver, RearmPolicy, StopReason, UnitRecord,
+    UnitStatus,
 };
-use firmware_parser::FirmwareFormat;
+use flash_core::serial::{program_serial, SerialAllocator, SerialConfig, SerialEncoding};
+use flash_core::{
+    ConnectionConfig, FlashEvent, FlashManager, FlashStage, LogLevel, ProgramOptions, WireProtocol,
+};
 
 use crate::state::AppState;
 
@@ -34,6 +38,10 @@ pub struct TargetInfoDto {
     pub ram_size: u32,
     pub page_size: u32,
     pub sector_count: usize,
+    /// Stages a cancellation request can actually stop part way through.
+    /// A backend that hands a whole stage to its driver in one call cannot
+    /// be interrupted, and the UI must not offer a Stop that would do nothing.
+    pub cancellable_stages: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -46,7 +54,55 @@ pub struct FirmwareInfoDto {
     pub highest_address: u32,
     pub segment_count: usize,
     pub entry_point: Option<u32>,
+    /// How the entry point was determined, so the user can tell a declared
+    /// entry point from one inferred from a Cortex-M vector table.
+    pub entry_point_source: String,
     pub crc32: u32,
+    pub segments: Vec<SegmentInfoDto>,
+    pub gaps: Vec<MemoryGapDto>,
+}
+
+/// One contiguous block the image will write.
+#[derive(Debug, Clone, Serialize)]
+pub struct SegmentInfoDto {
+    pub index: usize,
+    pub start_address: u32,
+    pub end_address: u32,
+    pub size_bytes: usize,
+    /// Uppercase hex, as the parser formats it (e.g. "0x0A5B1F0D").
+    pub crc32: String,
+}
+
+/// An unwritten span between two segments.
+#[derive(Debug, Clone, Serialize)]
+pub struct MemoryGapDto {
+    pub start_address: u32,
+    pub end_address: u32,
+    pub size: u32,
+}
+
+/// A saved programming profile, as the frontend sees it.
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+pub struct ProfileDto {
+    pub name: String,
+    pub description: Option<String>,
+    pub target: String,
+    pub probe_id: Option<String>,
+    pub interface: String,
+    pub speed_khz: u32,
+    pub firmware_path: Option<String>,
+    pub base_address: Option<String>,
+    pub verify: bool,
+    pub reset: bool,
+    pub full_chip_erase: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ProfileSummaryDto {
+    pub name: String,
+    pub description: Option<String>,
+    pub target: String,
+    pub file_path: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -57,6 +113,50 @@ pub struct FlashResultDto {
     pub verify_passed: Option<bool>,
     pub reset_performed: bool,
     pub message: String,
+}
+
+/// One board of a batch run, as the frontend sees it.
+#[derive(Debug, Clone, Serialize)]
+pub struct BatchUnitDto {
+    pub index: u32,
+    pub status: String,
+    /// Serial stamped into this board, when serial programming is on.
+    pub serial: Option<String>,
+    pub target: Option<String>,
+    pub bytes_flashed: u32,
+    pub verified: bool,
+    pub duration_ms: u64,
+    pub started_unix_ms: u64,
+    pub message: String,
+}
+
+/// Outcome of a whole batch run.
+#[derive(Debug, Clone, Serialize)]
+pub struct BatchReportDto {
+    pub units: Vec<BatchUnitDto>,
+    pub passed: u32,
+    pub failed: u32,
+    pub duration_ms: u64,
+    pub stop_reason: String,
+    /// Where the production log was written, when one was requested.
+    pub log_path: Option<String>,
+}
+
+/// Batch progress, published on the `batch:event` channel.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type")]
+pub enum BatchEventDto {
+    /// Waiting for the programmed board to be disconnected.
+    WaitingForDetach { index: u32 },
+    /// Waiting for the next board to be connected.
+    WaitingForAttach { index: u32 },
+    UnitStarted { index: u32 },
+    UnitFinished { unit: BatchUnitDto },
+    Finished {
+        passed: u32,
+        failed: u32,
+        stop_reason: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -171,12 +271,83 @@ fn flash_event_to_dto(event: &FlashEvent) -> FlashEventDto {
     }
 }
 
+/// Channel an event is published on, per the IPC contract.
+fn event_channel(event: &FlashEvent) -> &'static str {
+    match event {
+        FlashEvent::Progress(_) => "flash:progress",
+        FlashEvent::StageStarted { .. } | FlashEvent::StageCompleted { .. } => "flash:status",
+        FlashEvent::Log { .. } | FlashEvent::Warning { .. } | FlashEvent::Error { .. } => {
+            "flash:log"
+        }
+    }
+}
+
+/// Publishes telemetry to the frontend as it happens.
+///
+/// Emission is best-effort: a failed emit must not abort a flash that is
+/// already writing to a target.
+fn emit_event(app: &AppHandle, event: &FlashEvent) {
+    let _ = app.emit(event_channel(event), flash_event_to_dto(event));
+}
+
+fn entry_point_source_to_string(source: &EntryPointSource) -> String {
+    match source {
+        EntryPointSource::Record05 => "Intel HEX record 05".to_string(),
+        EntryPointSource::Record03 => "Intel HEX record 03".to_string(),
+        EntryPointSource::CortexMVectorTable => "Cortex-M vector table".to_string(),
+        EntryPointSource::ElfHeader => "ELF header".to_string(),
+        EntryPointSource::None => "not declared".to_string(),
+    }
+}
+
 fn format_to_string(format: &FirmwareFormat) -> String {
     match format {
         FirmwareFormat::IntelHex => "Intel HEX".to_string(),
         FirmwareFormat::RawBinary => "Raw Binary".to_string(),
         FirmwareFormat::Elf => "ELF".to_string(),
     }
+}
+
+/// Stages the session can abort part way through, named as the frontend
+/// spells them.
+fn cancellable_stages(session: &dyn flash_core::traits::FlashSession) -> Vec<String> {
+    [
+        FlashStage::Erasing,
+        FlashStage::Programming,
+        FlashStage::Verifying,
+    ]
+    .into_iter()
+    .filter(|stage| session.can_interrupt(*stage))
+    .map(|stage| stage_to_string(&stage))
+    .collect()
+}
+
+/// Maps core target metadata to the frontend DTO.
+fn target_info_dto(
+    info: &flash_core::types::TargetInfo,
+    cancellable: Vec<String>,
+) -> TargetInfoDto {
+    TargetInfoDto {
+        name: info.name.clone(),
+        display_name: info.display_name.clone(),
+        architecture: info.architecture.clone(),
+        flash_base: info.flash_base,
+        flash_size: info.flash_size,
+        ram_base: info.ram_base,
+        ram_size: info.ram_size,
+        page_size: info.page_size,
+        sector_count: info.sectors.len(),
+        cancellable_stages: cancellable,
+    }
+}
+
+/// Closes and drops the active session, if any, before opening a new one.
+fn close_active_session(state: &AppState) -> Result<(), String> {
+    let mut guard = state.session.lock().map_err(|e| e.to_string())?;
+    if let Some(mut session) = guard.take() {
+        let _ = session.close();
+    }
+    Ok(())
 }
 
 fn parse_protocol(protocol: &str) -> WireProtocol {
@@ -186,137 +357,128 @@ fn parse_protocol(protocol: &str) -> WireProtocol {
     }
 }
 
+/// Runs a blocking probe operation off the Tauri command thread.
+///
+/// Flashing a large image takes seconds to minutes and holds the session lock
+/// for its whole duration. Running that on the command thread would leave the
+/// frontend unable to poll events or ask for cancellation until it finished, so
+/// the work goes to a blocking worker and the command awaits it.
+async fn in_background<T, F>(work: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|e| format!("Operation thread failed: {}", e))?
+}
+
 // ── Tauri Commands ───────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub fn list_probes(state: State<'_, AppState>) -> Result<Vec<ProbeInfoDto>, String> {
-    let backend = state.backend.lock().map_err(|e| e.to_string())?;
-    let probes = backend.list_probes().map_err(|e| e.to_string())?;
+pub async fn list_probes(state: State<'_, AppState>) -> Result<Vec<ProbeInfoDto>, String> {
+    let state = (*state).clone();
+    in_background(move || {
+        let backend = state.backend.lock().map_err(|e| e.to_string())?;
+        let probes = backend.list_probes().map_err(|e| e.to_string())?;
 
-    Ok(probes
-        .into_iter()
-        .map(|p| ProbeInfoDto {
-            identifier: p.identifier,
-            vendor_name: p.vendor_name,
-            product_name: p.product_name,
-            serial_number: p.serial_number,
-            probe_type: format!("{:?}", p.probe_type),
-            supported_protocols: p
-                .supported_protocols
-                .iter()
-                .map(|pr| format!("{:?}", pr))
-                .collect(),
-            default_speed_khz: p.default_speed_khz,
-            max_speed_khz: p.max_speed_khz,
-        })
-        .collect())
+        Ok(probes
+            .into_iter()
+            .map(|p| ProbeInfoDto {
+                identifier: p.identifier,
+                vendor_name: p.vendor_name,
+                product_name: p.product_name,
+                serial_number: p.serial_number,
+                probe_type: format!("{:?}", p.probe_type),
+                supported_protocols: p
+                    .supported_protocols
+                    .iter()
+                    .map(|pr| format!("{:?}", pr))
+                    .collect(),
+                default_speed_khz: p.default_speed_khz,
+                max_speed_khz: p.max_speed_khz,
+            })
+            .collect())
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn connect_probe(
+pub async fn connect_probe(
     state: State<'_, AppState>,
     probe_id: Option<String>,
     target: String,
     protocol: String,
     speed: u32,
 ) -> Result<TargetInfoDto, String> {
-    // Close any existing session first
-    {
-        let mut session_guard = state.session.lock().map_err(|e| e.to_string())?;
-        if let Some(ref mut s) = *session_guard {
-            let _ = s.close();
+    let state = (*state).clone();
+    in_background(move || {
+        close_active_session(&state)?;
+
+        let config = ConnectionConfig {
+            probe_id,
+            target_name: target,
+            protocol: parse_protocol(&protocol),
+            speed_khz: speed,
+            connect_under_reset: false,
+            reset_type: None,
+        };
+
+        let session = {
+            let backend = state.backend.lock().map_err(|e| e.to_string())?;
+            backend.open_session(&config).map_err(|e| e.to_string())?
+        };
+
+        let target_info = session.target_info().cloned();
+        let cancellable = cancellable_stages(session.as_ref());
+        *state.session.lock().map_err(|e| e.to_string())? = Some(session);
+
+        match target_info {
+            Some(info) => Ok(target_info_dto(&info, cancellable)),
+            None => Err("Connected but target info not available".to_string()),
         }
-        *session_guard = None;
-    }
-
-    let config = ConnectionConfig {
-        probe_id,
-        target_name: target,
-        protocol: parse_protocol(&protocol),
-        speed_khz: speed,
-        connect_under_reset: false,
-        reset_type: None,
-    };
-
-    let backend = state.backend.lock().map_err(|e| e.to_string())?;
-    let session = backend.open_session(&config).map_err(|e| e.to_string())?;
-
-    let target_info = session.target_info().cloned();
-
-    let mut session_guard = state.session.lock().map_err(|e| e.to_string())?;
-    *session_guard = Some(session);
-
-    match target_info {
-        Some(info) => Ok(TargetInfoDto {
-            name: info.name,
-            display_name: info.display_name,
-            architecture: info.architecture,
-            flash_base: info.flash_base,
-            flash_size: info.flash_size,
-            ram_base: info.ram_base,
-            ram_size: info.ram_size,
-            page_size: info.page_size,
-            sector_count: info.sectors.len(),
-        }),
-        None => Err("Connected but target info not available".to_string()),
-    }
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn auto_detect_target(
+pub async fn auto_detect_target(
     state: State<'_, AppState>,
     probe_id: Option<String>,
     protocol: String,
     speed: u32,
 ) -> Result<TargetInfoDto, String> {
-    // Close any existing session first
-    {
-        let mut session_guard = state.session.lock().map_err(|e| e.to_string())?;
-        if let Some(ref mut s) = *session_guard {
-            let _ = s.close();
-        }
-        *session_guard = None;
-    }
+    let state = (*state).clone();
+    in_background(move || {
+        close_active_session(&state)?;
 
-    let config = ConnectionConfig {
-        probe_id,
-        target_name: "auto".to_string(),
-        protocol: parse_protocol(&protocol),
-        speed_khz: speed,
-        connect_under_reset: false,
-        reset_type: None,
-    };
+        let config = ConnectionConfig {
+            probe_id,
+            target_name: "auto".to_string(),
+            protocol: parse_protocol(&protocol),
+            speed_khz: speed,
+            connect_under_reset: false,
+            reset_type: None,
+        };
 
-    let backend = state.backend.lock().map_err(|e| e.to_string())?;
-    let session = backend.open_session(&config).map_err(|e| e.to_string())?;
+        let session = {
+            let backend = state.backend.lock().map_err(|e| e.to_string())?;
+            backend.open_session(&config).map_err(|e| e.to_string())?
+        };
 
-    let target_info = session.target_info().cloned().ok_or_else(|| {
-        "Could not detect target MCU information from connected probe".to_string()
-    })?;
+        let target_info = session.target_info().cloned().ok_or_else(|| {
+            "Could not detect target MCU information from connected probe".to_string()
+        })?;
+        let cancellable = cancellable_stages(session.as_ref());
 
-    let dto = TargetInfoDto {
-        name: target_info.name,
-        display_name: target_info.display_name,
-        architecture: target_info.architecture,
-        flash_base: target_info.flash_base,
-        flash_size: target_info.flash_size,
-        ram_base: target_info.ram_base,
-        ram_size: target_info.ram_size,
-        page_size: target_info.page_size,
-        sector_count: target_info.sectors.len(),
-    };
-
-    let mut session_guard = state.session.lock().map_err(|e| e.to_string())?;
-    *session_guard = Some(session);
-
-    Ok(dto)
+        *state.session.lock().map_err(|e| e.to_string())? = Some(session);
+        Ok(target_info_dto(&target_info, cancellable))
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn load_firmware(
-    path: String,
-    base_address: Option<u32>,
-) -> Result<FirmwareInfoDto, String> {
+pub fn load_firmware(path: String, base_address: Option<u32>) -> Result<FirmwareInfoDto, String> {
     let image = firmware_parser::parse_file(&path, base_address).map_err(|e| e.to_string())?;
 
     Ok(FirmwareInfoDto {
@@ -328,12 +490,36 @@ pub fn load_firmware(
         highest_address: image.metadata.highest_address,
         segment_count: image.metadata.segment_count,
         entry_point: image.metadata.entry_point,
+        entry_point_source: entry_point_source_to_string(&image.metadata.entry_point_source),
         crc32: image.metadata.crc32,
+        segments: image
+            .metadata
+            .segments
+            .iter()
+            .map(|segment| SegmentInfoDto {
+                index: segment.index,
+                start_address: segment.start_address,
+                end_address: segment.end_address,
+                size_bytes: segment.size_bytes,
+                crc32: segment.checksums.crc32.clone(),
+            })
+            .collect(),
+        gaps: image
+            .metadata
+            .memory_gaps
+            .iter()
+            .map(|gap| MemoryGapDto {
+                start_address: gap.start_address,
+                end_address: gap.end_address,
+                size: gap.size,
+            })
+            .collect(),
     })
 }
 
 #[tauri::command]
-pub fn flash_firmware(
+pub async fn flash_firmware(
+    app: AppHandle,
     state: State<'_, AppState>,
     path: String,
     base_address: Option<u32>,
@@ -341,109 +527,120 @@ pub fn flash_firmware(
     reset: bool,
     chip_erase: bool,
 ) -> Result<FlashResultDto, String> {
-    let image = firmware_parser::parse_file(&path, base_address).map_err(|e| e.to_string())?;
+    let state = (*state).clone();
+    in_background(move || {
+        let image = firmware_parser::parse_file(&path, base_address).map_err(|e| e.to_string())?;
 
-    let options = ProgramOptions {
-        verify_after: verify,
-        reset_after: reset,
-        chip_erase,
-        chunk_size: 1024,
-    };
+        let options = ProgramOptions {
+            verify_after: verify,
+            reset_after: reset,
+            chip_erase,
+            chunk_size: 1024,
+        };
 
-    // Create a progress callback that pushes events into shared state
-    let events_ref = &state.events;
-    let callback = move |event: FlashEvent| {
-        if let Ok(mut events) = events_ref.lock() {
-            events.push(event);
-        }
-    };
+        state.arm();
+        let emitter = app.clone();
+        let callback =
+            state.progress_callback(move |event: &FlashEvent| emit_event(&emitter, event));
 
-    let mut session_guard = state.session.lock().map_err(|e| e.to_string())?;
-    let session = session_guard
-        .as_mut()
-        .ok_or_else(|| "No active session. Connect to a probe first.".to_string())?;
+        let mut session_guard = state.session.lock().map_err(|e| e.to_string())?;
+        let session = session_guard
+            .as_mut()
+            .ok_or_else(|| "No active session. Connect to a probe first.".to_string())?;
 
-    let result = FlashManager::execute_flash(session.as_mut(), &image, &options, Some(&callback))
-        .map_err(|e| e.to_string())?;
+        let result =
+            FlashManager::execute_flash(session.as_mut(), &image, &options, Some(&callback))
+                .map_err(|e| describe_failure(&app, &state, e))?;
 
-    Ok(FlashResultDto {
-        success: result.success,
-        bytes_flashed: result.bytes_flashed,
-        duration_ms: result.duration_ms,
-        verify_passed: result.verify_report.as_ref().map(|r| r.success),
-        reset_performed: result.reset_performed,
-        message: result.message,
+        Ok(FlashResultDto {
+            success: result.success,
+            bytes_flashed: result.bytes_flashed,
+            duration_ms: result.duration_ms,
+            verify_passed: result.verify_report.as_ref().map(|r| r.success),
+            reset_performed: result.reset_performed,
+            message: result.message,
+        })
     })
+    .await
 }
 
 #[tauri::command]
-pub fn erase_chip(state: State<'_, AppState>) -> Result<String, String> {
-    let events_ref = &state.events;
-    let callback = move |event: FlashEvent| {
-        if let Ok(mut events) = events_ref.lock() {
-            events.push(event);
-        }
-    };
+pub async fn erase_chip(app: AppHandle, state: State<'_, AppState>) -> Result<String, String> {
+    let state = (*state).clone();
+    in_background(move || {
+        state.arm();
+        let emitter = app.clone();
+        let callback =
+            state.progress_callback(move |event: &FlashEvent| emit_event(&emitter, event));
 
-    let mut session_guard = state.session.lock().map_err(|e| e.to_string())?;
-    let session = session_guard
-        .as_mut()
-        .ok_or_else(|| "No active session. Connect to a probe first.".to_string())?;
+        let mut session_guard = state.session.lock().map_err(|e| e.to_string())?;
+        let session = session_guard
+            .as_mut()
+            .ok_or_else(|| "No active session. Connect to a probe first.".to_string())?;
 
-    session
-        .erase_all(Some(&callback))
-        .map_err(|e| e.to_string())?;
+        session
+            .erase_all(Some(&callback))
+            .map_err(|e| describe_failure(&app, &state, e))?;
 
-    Ok("Chip erased successfully".to_string())
+        Ok("Chip erased successfully".to_string())
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn verify_firmware(
+pub async fn verify_firmware(
+    app: AppHandle,
     state: State<'_, AppState>,
     path: String,
     base_address: Option<u32>,
 ) -> Result<VerifyResultDto, String> {
-    let image = firmware_parser::parse_file(&path, base_address).map_err(|e| e.to_string())?;
+    let state = (*state).clone();
+    in_background(move || {
+        let image = firmware_parser::parse_file(&path, base_address).map_err(|e| e.to_string())?;
 
-    let events_ref = &state.events;
-    let callback = move |event: FlashEvent| {
-        if let Ok(mut events) = events_ref.lock() {
-            events.push(event);
-        }
-    };
+        state.arm();
+        let emitter = app.clone();
+        let callback =
+            state.progress_callback(move |event: &FlashEvent| emit_event(&emitter, event));
 
-    let mut session_guard = state.session.lock().map_err(|e| e.to_string())?;
-    let session = session_guard
-        .as_mut()
-        .ok_or_else(|| "No active session. Connect to a probe first.".to_string())?;
+        let mut session_guard = state.session.lock().map_err(|e| e.to_string())?;
+        let session = session_guard
+            .as_mut()
+            .ok_or_else(|| "No active session. Connect to a probe first.".to_string())?;
 
-    let report = session
-        .verify(&image.segments, Some(&callback))
-        .map_err(|e| e.to_string())?;
+        let report = session
+            .verify(&image.segments, Some(&callback))
+            .map_err(|e| describe_failure(&app, &state, e))?;
 
-    Ok(VerifyResultDto {
-        success: report.success,
-        bytes_verified: report.bytes_verified,
-        mismatch_count: report.mismatches.len(),
-        checksum_expected: report.checksum_expected,
-        checksum_actual: report.checksum_actual,
+        Ok(VerifyResultDto {
+            success: report.success,
+            bytes_verified: report.bytes_verified,
+            mismatch_count: report.mismatches.len(),
+            checksum_expected: report.checksum_expected,
+            checksum_actual: report.checksum_actual,
+        })
     })
+    .await
 }
 
 #[tauri::command]
-pub fn reset_target(state: State<'_, AppState>, halt: bool) -> Result<String, String> {
-    let mut session_guard = state.session.lock().map_err(|e| e.to_string())?;
-    let session = session_guard
-        .as_mut()
-        .ok_or_else(|| "No active session. Connect to a probe first.".to_string())?;
+pub async fn reset_target(state: State<'_, AppState>, halt: bool) -> Result<String, String> {
+    let state = (*state).clone();
+    in_background(move || {
+        let mut session_guard = state.session.lock().map_err(|e| e.to_string())?;
+        let session = session_guard
+            .as_mut()
+            .ok_or_else(|| "No active session. Connect to a probe first.".to_string())?;
 
-    session.reset(halt).map_err(|e| e.to_string())?;
+        session.reset(halt).map_err(|e| e.to_string())?;
 
-    Ok(if halt {
-        "Target reset and halted".to_string()
-    } else {
-        "Target reset successfully".to_string()
+        Ok(if halt {
+            "Target reset and halted".to_string()
+        } else {
+            "Target reset successfully".to_string()
+        })
     })
+    .await
 }
 
 /// Closes the active session and releases the debug probe.
@@ -451,19 +648,443 @@ pub fn reset_target(state: State<'_, AppState>, halt: bool) -> Result<String, St
 /// Leaving the probe held blocks other tools (STM32CubeProgrammer, OpenOCD)
 /// and a second run of this app, so disconnecting must be explicit.
 #[tauri::command]
-pub fn disconnect_probe(state: State<'_, AppState>) -> Result<String, String> {
-    let mut session_guard = state.session.lock().map_err(|e| e.to_string())?;
-    match session_guard.take() {
-        Some(mut session) => {
-            session.close().map_err(|e| e.to_string())?;
-            Ok("Disconnected from target".to_string())
+pub async fn disconnect_probe(state: State<'_, AppState>) -> Result<String, String> {
+    let state = (*state).clone();
+    in_background(move || {
+        let mut session_guard = state.session.lock().map_err(|e| e.to_string())?;
+        match session_guard.take() {
+            Some(mut session) => {
+                session.close().map_err(|e| e.to_string())?;
+                Ok("Disconnected from target".to_string())
+            }
+            None => Ok("No active session".to_string()),
         }
-        None => Ok("No active session".to_string()),
+    })
+    .await
+}
+
+/// Turns a failure into a message, distinguishing a user cancellation from a
+/// genuine error: the backends surface cancellation as an ordinary error, so
+/// without this the console would report a cancelled flash as a fault.
+fn describe_failure(app: &AppHandle, state: &AppState, error: flash_core::FlashError) -> String {
+    if state.is_cancelled() {
+        let event = FlashEvent::Error {
+            stage: FlashStage::Cancelled,
+            message: "Operation cancelled".to_string(),
+        };
+        emit_event(app, &event);
+        "Operation cancelled".to_string()
+    } else {
+        error.to_string()
+    }
+}
+
+fn unit_dto(record: &UnitRecord) -> BatchUnitDto {
+    BatchUnitDto {
+        index: record.index,
+        status: record.status.as_str().to_string(),
+        serial: record.serial.clone(),
+        target: record.target.clone(),
+        bytes_flashed: record.bytes_flashed,
+        verified: record.verified,
+        duration_ms: record.duration_ms,
+        started_unix_ms: record.started_unix_ms,
+        message: record.message.clone(),
+    }
+}
+
+fn stop_reason_to_string(reason: &StopReason) -> String {
+    match reason {
+        StopReason::CountReached => "count_reached".to_string(),
+        StopReason::Cancelled => "cancelled".to_string(),
+        StopReason::FailureStop => "failure_stop".to_string(),
+        StopReason::AttachTimeout => "attach_timeout".to_string(),
+        StopReason::DetachTimeout => "detach_timeout".to_string(),
+    }
+}
+
+/// Publishes batch progress and carries the shared cancellation flag, so the
+/// existing Stop button ends a run between boards as well as mid-write.
+struct AppBatchObserver {
+    app: AppHandle,
+    state: AppState,
+}
+
+impl BatchObserver for AppBatchObserver {
+    fn on_batch_event(&self, event: BatchEvent) {
+        let dto = match event {
+            BatchEvent::WaitingForDetach { index } => BatchEventDto::WaitingForDetach { index },
+            BatchEvent::WaitingForAttach { index } => BatchEventDto::WaitingForAttach { index },
+            BatchEvent::UnitStarted { index, .. } => BatchEventDto::UnitStarted { index },
+            BatchEvent::UnitFinished(record) => {
+                // Mirror the outcome into the console log so a batch reads back
+                // in the same place as a single flash.
+                let level = match record.status {
+                    UnitStatus::Passed => LogLevel::Info,
+                    UnitStatus::Failed => LogLevel::Error,
+                };
+                let log = FlashEvent::Log {
+                    level,
+                    message: format!(
+                        "Unit {} {}: {}",
+                        record.index,
+                        record.status.as_str(),
+                        record.message
+                    ),
+                    timestamp_ms: record.started_unix_ms,
+                };
+                emit_event(&self.app, &log);
+                BatchEventDto::UnitFinished {
+                    unit: unit_dto(&record),
+                }
+            }
+            BatchEvent::BatchFinished {
+                passed,
+                failed,
+                stop_reason,
+            } => BatchEventDto::Finished {
+                passed,
+                failed,
+                stop_reason: stop_reason_to_string(&stop_reason),
+            },
+        };
+        let _ = self.app.emit("batch:event", dto);
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.state.is_cancelled()
+    }
+}
+
+/// Programs the same firmware onto a series of boards.
+///
+/// The run owns the probe for its whole duration, so the interactive session is
+/// closed first and the frontend has to reconnect afterwards. Stopping is the
+/// same gesture as for a single flash: `cancel_operation` ends the board in
+/// flight and the run with it.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn start_batch(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    path: String,
+    base_address: Option<u32>,
+    probe_id: Option<String>,
+    target: String,
+    protocol: String,
+    speed: u32,
+    verify: bool,
+    reset: bool,
+    chip_erase: bool,
+    count: Option<u32>,
+    rearm: String,
+    stop_on_error: bool,
+    delay_ms: u64,
+    log_path: Option<String>,
+    log_json: bool,
+    serial_address: Option<u32>,
+    serial_format: Option<String>,
+    serial_start: Option<u64>,
+    serial_step: Option<u64>,
+    serial_encoding: Option<String>,
+    serial_width: Option<usize>,
+) -> Result<BatchReportDto, String> {
+    let state = (*state).clone();
+    in_background(move || {
+        let image = firmware_parser::parse_file(&path, base_address).map_err(|e| e.to_string())?;
+
+        // A batch opens and closes one session per board; an interactive
+        // session left open would hold the probe against it.
+        close_active_session(&state)?;
+
+        let config = BatchConfig {
+            connection: ConnectionConfig {
+                probe_id,
+                target_name: target,
+                protocol: parse_protocol(&protocol),
+                speed_khz: speed,
+                connect_under_reset: false,
+                reset_type: None,
+            },
+            options: ProgramOptions {
+                verify_after: verify,
+                reset_after: reset,
+                chip_erase,
+                chunk_size: 1024,
+            },
+            count,
+            continue_on_error: !stop_on_error,
+            delay_ms,
+            rearm: if rearm.eq_ignore_ascii_case("immediate") {
+                RearmPolicy::Immediate
+            } else {
+                RearmPolicy::Detach
+            },
+            ..BatchConfig::default()
+        };
+
+        state.arm();
+        let emitter = app.clone();
+        let progress =
+            state.progress_callback(move |event: &FlashEvent| emit_event(&emitter, event));
+        let observer = AppBatchObserver {
+            app: app.clone(),
+            state: state.clone(),
+        };
+
+        // Serial programming is opt-in: without an address, boards are
+        // programmed exactly as before.
+        let allocator = serial_address.map(|address| {
+            SerialAllocator::new(SerialConfig {
+                address,
+                format: serial_format.unwrap_or_else(|| "{n}".to_string()),
+                start: serial_start.unwrap_or(1),
+                step: serial_step.unwrap_or(1),
+                encoding: match serial_encoding.as_deref() {
+                    Some("u32le") => SerialEncoding::U32Le,
+                    Some("u32be") => SerialEncoding::U32Be,
+                    Some("u64le") => SerialEncoding::U64Le,
+                    _ => SerialEncoding::Ascii,
+                },
+                width: serial_width.unwrap_or(16),
+                pad: 0xFF,
+                verify: true,
+            })
+        });
+
+        let report = {
+            let backend = state.backend.lock().map_err(|e| e.to_string())?;
+            let mut opener = |cfg: &ConnectionConfig| backend.open_session(cfg);
+            let mut after_unit =
+                |session: &mut dyn flash_core::traits::FlashSession, _i: u32| match allocator {
+                    Some(ref allocator) => {
+                        program_serial(session, allocator.config(), allocator.take()).map(Some)
+                    }
+                    None => Ok(None),
+                };
+            run_batch_with(
+                &mut opener,
+                Some(&mut after_unit),
+                &image,
+                &config,
+                Some(&observer),
+                Some(&progress),
+            )
+        };
+
+        let written_log = match log_path {
+            Some(ref target_path) => {
+                let contents = if log_json {
+                    serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?
+                } else {
+                    report.to_csv()
+                };
+                std::fs::write(target_path, contents)
+                    .map_err(|e| format!("Failed to write batch log: {}", e))?;
+                Some(target_path.clone())
+            }
+            None => None,
+        };
+
+        Ok(BatchReportDto {
+            units: report.records.iter().map(unit_dto).collect(),
+            passed: report.passed,
+            failed: report.failed,
+            duration_ms: report.duration_ms,
+            stop_reason: stop_reason_to_string(&report.stop_reason),
+            log_path: written_log,
+        })
+    })
+    .await
+}
+
+/// Requests cancellation of the operation currently in flight.
+///
+/// The backends poll this at block boundaries, so the target is left in a
+/// defined state: a cancelled program stops between chunks rather than part way
+/// through a write. Returns immediately; the in-flight command reports the
+/// cancellation to the frontend.
+#[tauri::command]
+pub fn cancel_operation(app: AppHandle, state: State<'_, AppState>) -> Result<String, String> {
+    state.cancel();
+    let event = FlashEvent::Warning {
+        message: "Cancellation requested; stopping at the next block boundary of an \
+                  interruptible stage..."
+            .to_string(),
+    };
+    emit_event(&app, &event);
+    Ok("Cancellation requested".to_string())
+}
+
+// ── Profiles ─────────────────────────────────────────────────────────────────
+//
+// The store lives in `flash-core`, so a profile saved here is the same file the
+// CLI reads, and vice versa.
+
+fn profile_to_dto(profile: &flash_core::FlashProfile) -> ProfileDto {
+    ProfileDto {
+        name: profile.name().to_string(),
+        description: profile.description().map(ToString::to_string),
+        target: profile.target().to_string(),
+        probe_id: profile.probe_id().map(ToString::to_string),
+        interface: profile.interface().to_string(),
+        speed_khz: profile.speed_khz(),
+        firmware_path: profile.default_path().map(ToString::to_string),
+        base_address: profile.base_address().map(ToString::to_string),
+        verify: profile.verify_after(),
+        reset: profile.reset_after(),
+        full_chip_erase: profile.full_chip_erase(),
     }
 }
 
 #[tauri::command]
-pub fn get_flash_events(state: State<'_, AppState>) -> Result<Vec<FlashEventDto>, String> {
-    let events = state.drain_events();
-    Ok(events.iter().map(flash_event_to_dto).collect())
+pub fn list_profiles() -> Result<Vec<ProfileSummaryDto>, String> {
+    flash_core::list_profiles(None)
+        .map(|profiles| {
+            profiles
+                .into_iter()
+                .map(|p| ProfileSummaryDto {
+                    name: p.name,
+                    description: p.description,
+                    target: p.target,
+                    file_path: p.file_path,
+                })
+                .collect()
+        })
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn load_profile(name: String) -> Result<ProfileDto, String> {
+    flash_core::load_profile(&name, None)
+        .map(|profile| profile_to_dto(&profile))
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn save_profile(profile: ProfileDto) -> Result<String, String> {
+    let stored = flash_core::FlashProfile::new(
+        profile.name,
+        profile.description,
+        profile.target,
+        profile.interface,
+        profile.speed_khz,
+        profile.probe_id,
+        profile.firmware_path,
+        profile.base_address,
+        profile.verify,
+        profile.reset,
+        profile.full_chip_erase,
+    );
+    flash_core::save_profile(&stored, None)
+        .map(|path| path.to_string_lossy().to_string())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn delete_profile(name: String) -> Result<String, String> {
+    flash_core::delete_profile(&name, None)
+        .map(|path| path.to_string_lossy().to_string())
+        .map_err(|e| e.to_string())
+}
+
+// ── Memory viewer ────────────────────────────────────────────────────────────
+
+/// Largest region a single read may return.
+///
+/// Reading megabytes over SWD takes minutes and would serialise the whole IPC
+/// channel behind one request, so the viewer pages instead.
+const MAX_READ_BYTES: u32 = 64 * 1024;
+
+/// A block of target memory read back from the device.
+#[derive(Debug, Clone, Serialize)]
+pub struct MemoryReadDto {
+    pub address: u32,
+    pub bytes: Vec<u8>,
+}
+
+/// Reads `length` bytes of target memory starting at `address`.
+#[tauri::command]
+pub async fn read_memory(
+    state: State<'_, AppState>,
+    address: u32,
+    length: u32,
+) -> Result<MemoryReadDto, String> {
+    if length == 0 {
+        return Err("Length must be greater than zero".to_string());
+    }
+    if length > MAX_READ_BYTES {
+        return Err(format!(
+            "Read of {} bytes exceeds the {} byte limit; read in pages instead",
+            length, MAX_READ_BYTES
+        ));
+    }
+    if address.checked_add(length).is_none() {
+        return Err("Read range overflows the 32-bit address space".to_string());
+    }
+
+    let state = (*state).clone();
+    in_background(move || {
+        let mut session_guard = state.session.lock().map_err(|e| e.to_string())?;
+        let session = session_guard
+            .as_mut()
+            .ok_or_else(|| "No active session. Connect to a probe first.".to_string())?;
+
+        let bytes = session
+            .read_memory(address, length)
+            .map_err(|e| e.to_string())?;
+
+        Ok(MemoryReadDto { address, bytes })
+    })
+    .await
+}
+
+/// Returns the bytes a parsed firmware image places in `address..address+length`.
+///
+/// Used by the memory viewer to compare what is on the device against what the
+/// image says should be there. Addresses the image does not cover come back as
+/// `None`, so a gap is not confused with a byte that happens to be zero.
+#[tauri::command]
+pub fn read_firmware_window(
+    path: String,
+    base_address: Option<u32>,
+    address: u32,
+    length: u32,
+) -> Result<Vec<Option<u8>>, String> {
+    if length == 0 || length > MAX_READ_BYTES {
+        return Err(format!("Length must be between 1 and {}", MAX_READ_BYTES));
+    }
+    let image = firmware_parser::parse_file(&path, base_address).map_err(|e| e.to_string())?;
+
+    let mut window = vec![None; length as usize];
+    for segment in &image.segments {
+        let start = segment.start_address as u64;
+        let end = start + segment.data.len() as u64;
+        for (offset, slot) in window.iter_mut().enumerate() {
+            let at = address as u64 + offset as u64;
+            if at >= start && at < end {
+                *slot = Some(segment.data[(at - start) as usize]);
+            }
+        }
+    }
+    Ok(window)
+}
+
+/// Reads a region of target memory and writes it to `path` as a raw binary.
+#[tauri::command]
+pub async fn save_memory_region(
+    state: State<'_, AppState>,
+    path: String,
+    address: u32,
+    length: u32,
+) -> Result<String, String> {
+    let region = read_memory(state, address, length).await?;
+    std::fs::write(&path, &region.bytes)
+        .map_err(|e| format!("Failed to write '{}': {}", path, e))?;
+    Ok(format!(
+        "Saved {} bytes from {:#010X} to {}",
+        region.bytes.len(),
+        address,
+        path
+    ))
 }

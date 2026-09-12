@@ -71,6 +71,7 @@ describe("AppContext", () => {
               ram_size: 96 * 1024,
               page_size: 1024,
               sector_count: 8,
+              cancellable_stages: ["erasing", "programming", "verifying"],
             },
           });
         }, 0);
@@ -179,7 +180,18 @@ describe("AppContext", () => {
             highest_address: 0x08000400,
             segment_count: 1,
             entry_point: 0x08000100,
+            entry_point_source: "Cortex-M vector table",
             crc32: 0x12345678,
+            segments: [
+              {
+                index: 0,
+                start_address: 0x08000000,
+                end_address: 0x08000400,
+                size_bytes: 1024,
+                crc32: "0x12345678",
+              },
+            ],
+            gaps: [],
           },
           path: "/test/firmware.hex",
         });

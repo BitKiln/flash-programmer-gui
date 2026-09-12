@@ -25,6 +25,8 @@ export interface TargetInfo {
   ram_size: number;
   page_size: number;
   sector_count: number;
+  /** Stages a cancellation request can actually stop part way through. */
+  cancellable_stages: string[];
 }
 
 // ── Firmware types ───────────────────────────────────────────────────────────
@@ -39,6 +41,26 @@ export interface FirmwareInfo {
   segment_count: number;
   entry_point: number | null;
   crc32: number;
+  entry_point_source: string;
+  segments: SegmentInfo[];
+  gaps: MemoryGap[];
+}
+
+/** One contiguous block the image will write. */
+export interface SegmentInfo {
+  index: number;
+  start_address: number;
+  end_address: number;
+  size_bytes: number;
+  /** Uppercase hex string, as the parser formats it. */
+  crc32: string;
+}
+
+/** An unwritten span between two segments. */
+export interface MemoryGap {
+  start_address: number;
+  end_address: number;
+  size: number;
 }
 
 // ── Flash operation types ────────────────────────────────────────────────────
@@ -145,6 +167,8 @@ export type FlashStatus =
   | "programming"
   | "verifying"
   | "resetting"
+  | "cancelling"
+  | "cancelled"
   | "completed"
   | "error";
 
@@ -162,4 +186,116 @@ export interface AppState {
   progress: ProgressInfo;
   logs: LogEntry[];
   recentFiles: string[];
+  /** Batch tab settings; kept here so switching tabs does not clear them. */
+  batchSettings: BatchSettings;
+}
+
+/** The Batch tab's form, minus the firmware and probe it reads from AppState. */
+export interface BatchSettings {
+  target: string;
+  count: string;
+  protocol: string;
+  speed: number;
+  rearm: "detach" | "immediate";
+  delayMs: string;
+  logPath: string;
+  logJson: boolean;
+  stopOnError: boolean;
+  serialAddress: string;
+  serialFormat: string;
+  serialStart: string;
+  serialStep: string;
+  serialEncoding: "ascii" | "u32le" | "u32be" | "u64le";
+  serialWidth: string;
+}
+
+// ── Profiles ─────────────────────────────────────────────────────────────────
+
+/** A saved programming profile, shared with the CLI's TOML store. */
+export interface Profile {
+  name: string;
+  description: string | null;
+  target: string;
+  probe_id: string | null;
+  interface: string;
+  speed_khz: number;
+  firmware_path: string | null;
+  base_address: string | null;
+  verify: boolean;
+  reset: boolean;
+  full_chip_erase: boolean;
+}
+
+export interface ProfileSummary {
+  name: string;
+  description: string | null;
+  target: string;
+  file_path: string;
+}
+
+// ── Memory viewer ────────────────────────────────────────────────────────────
+
+/** A block of target memory read back from the device. */
+export interface MemoryRead {
+  address: number;
+  bytes: number[];
+}
+
+// ── Batch (production) mode ──────────────────────────────────────────────────
+
+/** One board of a batch run. */
+export interface BatchUnit {
+  index: number;
+  status: "passed" | "failed";
+  /** Serial stamped into this board, when serial programming is on. */
+  serial: string | null;
+  target: string | null;
+  bytes_flashed: number;
+  verified: boolean;
+  duration_ms: number;
+  started_unix_ms: number;
+  message: string;
+}
+
+export interface BatchReport {
+  units: BatchUnit[];
+  passed: number;
+  failed: number;
+  duration_ms: number;
+  stop_reason: string;
+  log_path: string | null;
+}
+
+/** Batch progress pushed on the `batch:event` channel. */
+export type BatchEventDto =
+  | { type: "WaitingForDetach"; index: number }
+  | { type: "WaitingForAttach"; index: number }
+  | { type: "UnitStarted"; index: number }
+  | { type: "UnitFinished"; unit: BatchUnit }
+  | { type: "Finished"; passed: number; failed: number; stop_reason: string };
+
+/** What the Batch panel sends to `start_batch`. */
+export interface BatchOptions {
+  path: string;
+  baseAddress: number | null;
+  probeId: string | null;
+  target: string;
+  protocol: string;
+  speed: number;
+  verify: boolean;
+  reset: boolean;
+  chipErase: boolean;
+  count: number | null;
+  rearm: "detach" | "immediate";
+  stopOnError: boolean;
+  delayMs: number;
+  logPath: string | null;
+  logJson: boolean;
+  /** Serial programming is off unless an address is given. */
+  serialAddress: number | null;
+  serialFormat: string;
+  serialStart: number;
+  serialStep: number;
+  serialEncoding: "ascii" | "u32le" | "u32be" | "u64le";
+  serialWidth: number;
 }
