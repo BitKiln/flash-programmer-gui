@@ -136,22 +136,36 @@ export function useFlashProgrammer() {
 
   const refreshProbes = useCallback(async () => {
     try {
-      addLog("info", "Scanning USB ports for physical debug probes (probe-rs)...");
+      addLog("info", "Scanning for debug probes and serial ports...");
       const probes = await invoke<ProbeInfo[]>("list_probes");
       dispatch({ type: "SET_PROBES", probes });
 
       const hardwareProbes = probes.filter(
         (p) => !p.identifier.startsWith("mock:") && p.probe_type !== "VirtualMock"
       );
-      if (hardwareProbes.length > 0) {
-        addLog(
-          "success",
-          `Detected ${hardwareProbes.length} physical hardware probe(s): ${hardwareProbes.map((p) => p.product_name).join(", ")}`
-        );
+      // A serial port is not a debug probe, and calling one a probe in the log
+      // makes it look as though a board has a debugger attached when it does
+      // not.
+      const serialPorts = hardwareProbes.filter((p) =>
+        p.identifier.startsWith("esp:")
+      );
+      const debugProbes = hardwareProbes.filter(
+        (p) => !p.identifier.startsWith("esp:")
+      );
+      const found = [
+        debugProbes.length > 0
+          ? `${debugProbes.length} debug probe(s): ${debugProbes.map((p) => p.product_name).join(", ")}`
+          : null,
+        serialPorts.length > 0
+          ? `${serialPorts.length} serial port(s): ${serialPorts.map((p) => p.product_name).join(", ")}`
+          : null,
+      ].filter(Boolean);
+      if (found.length > 0) {
+        addLog("success", `Detected ${found.join("; ")}`);
       } else {
         addLog(
           "info",
-          "No physical USB debug probe detected. (Virtual simulation mode available)"
+          "No debug probe or serial port detected. (Simulator mode is available)"
         );
       }
       if (probes.length > 0 && !state.selectedProbe) {
@@ -583,7 +597,7 @@ export function useFlashProgrammer() {
       try {
         const report = await invoke<BatchReport>("start_batch", {
           path: options.path,
-          baseAddress: options.baseAddress,
+          baseAddress: options.baseAddress ?? loadedBaseAddress(),
           probeId: options.probeId,
           target: options.target,
           protocol: options.protocol,
@@ -623,7 +637,7 @@ export function useFlashProgrammer() {
         return null;
       }
     },
-    [dispatch, addLog, reportFailure]
+    [loadedBaseAddress, dispatch, addLog, reportFailure]
   );
 
   // ── Reset ────────────────────────────────────────────────────────────────

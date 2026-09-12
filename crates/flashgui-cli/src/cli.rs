@@ -306,9 +306,9 @@ pub struct EraseArgs {
     #[arg(long)]
     pub address: Option<String>,
 
-    /// Length in bytes to erase
+    /// Length in bytes to erase, decimal or hex (e.g. 4096 or 0x1000)
     #[arg(long)]
-    pub length: Option<u32>,
+    pub length: Option<String>,
 }
 
 #[derive(Args, Debug, Clone)]
