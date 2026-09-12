@@ -123,6 +123,18 @@ impl TargetInfo {
         addr >= self.flash_base && addr < self.flash_end()
     }
 
+    /// Whether `start..start + length` touches the flash region at all.
+    ///
+    /// Used to keep direct memory writes out of flash, where they would skip
+    /// the erase that a program performs.
+    pub fn overlaps_flash(&self, start: u32, length: u32) -> bool {
+        if length == 0 || self.flash_size == 0 {
+            return false;
+        }
+        let end = start.saturating_add(length);
+        start < self.flash_end() && end > self.flash_base
+    }
+
     pub fn sector_for_address(&self, addr: u32) -> Option<&SectorInfo> {
         self.sectors.iter().find(|s| s.contains(addr))
     }

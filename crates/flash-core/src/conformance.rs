@@ -237,7 +237,60 @@ fn check_session(
         let _ = session.can_interrupt(stage);
     }
 
-    // 6. close is called on drop and again on an explicit disconnect.
+    // 6. can_write_memory and write_memory agree. A backend with no bus access
+    //    must refuse the write outright rather than report a success the target
+    //    never saw.
+    let probe = [0xA5u8, 0x5A, 0x00, 0xFF];
+    let ram = target.ram_base;
+    let claims_write = session.can_write_memory();
+    match (claims_write, session.write_memory(ram, &probe)) {
+        (false, Err(FlashError::Unsupported(_))) => {}
+        (false, other) => {
+            return fail(
+                "write_memory",
+                format!(
+                    "can_write_memory is false, so the write should have been refused \
+                     as Unsupported, but it returned {other:?}"
+                ),
+            )
+        }
+        (true, Ok(())) => match session.read_memory(ram, probe.len() as u32) {
+            Ok(read) if read == probe => {}
+            Ok(read) => {
+                return fail(
+                    "write_memory",
+                    format!("wrote {probe:02X?} at 0x{ram:08X} but read back {read:02X?}"),
+                )
+            }
+            Err(e) => return fail("read_memory", e.to_string()),
+        },
+        (true, Err(e)) => {
+            return fail(
+                "write_memory",
+                format!("can_write_memory is true but the write failed: {e}"),
+            )
+        }
+    }
+
+    // 7. A memory write is not a back door into flash. There is no erase on
+    //    that path, so it would either do nothing or leave a half-written
+    //    sector -- and both look like success to the caller.
+    if claims_write && target.flash_size > 0 {
+        match session.write_memory(base, &probe) {
+            Err(FlashError::InvalidAddress { .. }) | Err(FlashError::Unsupported(_)) => {}
+            other => {
+                return fail(
+                    "write_memory",
+                    format!(
+                        "accepted a write into flash at 0x{base:08X} ({other:?}); \
+                         flash must go through program, which erases first"
+                    ),
+                )
+            }
+        }
+    }
+
+    // 8. close is called on drop and again on an explicit disconnect.
     if let Err(e) = session.close() {
         return fail("close", e.to_string());
     }

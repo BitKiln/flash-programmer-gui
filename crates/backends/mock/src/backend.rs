@@ -223,6 +223,9 @@ pub struct MockFlashSession {
     pub probe_info: Option<ProbeInfo>,
     pub target_info: TargetInfo,
     pub memory: MockFlashMemory,
+    /// The target's RAM, so a direct memory write has somewhere to land.
+    /// Unlike flash it takes any value at any time: no erase, no NOR rules.
+    pub ram: Vec<u8>,
     pub fault_injector: Arc<Mutex<FaultInjector>>,
     pub halted: bool,
     pub closed: bool,
@@ -233,15 +236,29 @@ impl MockFlashSession {
     /// Creates a new `MockFlashSession` with memory initialized to erased `0xFF`.
     pub fn new(target: TargetInfo, fault_injector: Arc<Mutex<FaultInjector>>) -> Self {
         let memory = MockFlashMemory::from_target(&target);
+        let ram = vec![0u8; target.ram_size as usize];
         Self {
             probe_info: None,
             target_info: target,
             memory,
+            ram,
             fault_injector,
             halted: false,
             closed: false,
             reset_count: 0,
         }
+    }
+
+    /// The slice of the RAM model covering `address..address + length`, or
+    /// `None` when the window is not wholly inside RAM.
+    fn ram_range(&self, address: u32, length: u32) -> Option<std::ops::Range<usize>> {
+        let base = self.target_info.ram_base;
+        if length == 0 || self.ram.is_empty() || address < base {
+            return None;
+        }
+        let start = (address - base) as usize;
+        let end = start.checked_add(length as usize)?;
+        (end <= self.ram.len()).then_some(start..end)
     }
 
     /// Creates a `MockFlashSession` initialized with existing flash memory.
@@ -250,10 +267,12 @@ impl MockFlashSession {
         memory: MockFlashMemory,
         fault_injector: Arc<Mutex<FaultInjector>>,
     ) -> Self {
+        let ram = vec![0u8; target.ram_size as usize];
         Self {
             probe_info: None,
             target_info: target,
             memory,
+            ram,
             fault_injector,
             halted: false,
             closed: false,
@@ -618,6 +637,9 @@ impl FlashSession for MockFlashSession {
 
     fn read_memory(&mut self, address: u32, length: u32) -> Result<Vec<u8>, FlashError> {
         self.check_alive()?;
+        if let Some(range) = self.ram_range(address, length) {
+            return Ok(self.ram[range].to_vec());
+        }
         let raw = self.memory.read_bytes(address, length)?;
         let injector = self
             .fault_injector
@@ -630,6 +652,37 @@ impl FlashSession for MockFlashSession {
             result.push(injector.maybe_corrupt_verify_byte(addr, b));
         }
         Ok(result)
+    }
+
+    fn can_write_memory(&self) -> bool {
+        true
+    }
+
+    fn write_memory(&mut self, address: u32, data: &[u8]) -> Result<(), FlashError> {
+        self.check_alive()?;
+        let length = data.len() as u32;
+        if self.target_info.overlaps_flash(address, length) {
+            return Err(FlashError::InvalidAddress {
+                address,
+                reason: "a memory write does not erase, so it cannot write flash; \
+                         program the image instead"
+                    .to_string(),
+            });
+        }
+        let Some(range) = self.ram_range(address, length) else {
+            return Err(FlashError::InvalidAddress {
+                address,
+                reason: format!(
+                    "outside the target's RAM (0x{:08X}..0x{:08X})",
+                    self.target_info.ram_base,
+                    self.target_info
+                        .ram_base
+                        .saturating_add(self.target_info.ram_size)
+                ),
+            });
+        };
+        self.ram[range].copy_from_slice(data);
+        Ok(())
     }
 
     fn reset(&mut self, halt: bool) -> Result<(), FlashError> {

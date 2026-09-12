@@ -759,6 +759,36 @@ impl FlashSession for ProbeRsLiveSession {
         Ok(buf)
     }
 
+    fn can_write_memory(&self) -> bool {
+        true
+    }
+
+    fn write_memory(&mut self, address: u32, data: &[u8]) -> Result<(), FlashError> {
+        // A core write goes straight onto the bus with no erase in front of
+        // it. On flash that either does nothing or half-writes a sector, and
+        // the probe reports success either way -- so refuse it here and name
+        // the path that does erase.
+        if let Some(target) = self.target_info.as_ref() {
+            if target.overlaps_flash(address, data.len() as u32) {
+                return Err(FlashError::InvalidAddress {
+                    address,
+                    reason: "a memory write does not erase, so it cannot write flash; \
+                             program the image instead"
+                        .to_string(),
+                });
+            }
+        }
+        let mut core = self
+            .session
+            .core(0)
+            .map_err(|e| FlashError::ProbeCommunication(e.to_string()))?;
+        core.write(address as u64, data)
+            .map_err(|e| FlashError::ProbeCommunication(e.to_string()))?;
+        core.flush()
+            .map_err(|e| FlashError::ProbeCommunication(e.to_string()))?;
+        Ok(())
+    }
+
     fn reset(&mut self, halt: bool) -> Result<(), FlashError> {
         let mut core = self
             .session

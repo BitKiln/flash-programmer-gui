@@ -94,6 +94,29 @@ pub trait FlashSession: Send {
     /// Read raw bytes from target memory at `address`.
     fn read_memory(&mut self, address: u32, length: u32) -> Result<Vec<u8>, FlashError>;
 
+    /// Whether this session can write target memory directly.
+    ///
+    /// Defaults to false: a transport that only speaks to a flash controller
+    /// has no bus access, and a caller must not offer an edit that cannot land.
+    fn can_write_memory(&self) -> bool {
+        false
+    }
+
+    /// Write raw bytes to target memory at `address`.
+    ///
+    /// This is a direct bus write, not a flash program: nothing is erased
+    /// first. It is for RAM, peripheral registers, and memory-mapped
+    /// configuration such as option bytes. Writing into the flash region must
+    /// be refused rather than attempted -- without an erase such a write either
+    /// does nothing or leaves a half-written sector, and both look like success
+    /// from here. Use [`program`](FlashSession::program) for flash.
+    fn write_memory(&mut self, address: u32, _data: &[u8]) -> Result<(), FlashError> {
+        let _ = address;
+        Err(FlashError::Unsupported(
+            "this backend cannot write target memory directly".to_string(),
+        ))
+    }
+
     /// Trigger target system reset. If `halt` is true, pause core at entry.
     fn reset(&mut self, halt: bool) -> Result<(), FlashError>;
 
