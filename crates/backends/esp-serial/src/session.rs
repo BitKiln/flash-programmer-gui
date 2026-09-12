@@ -19,7 +19,7 @@ use flash_core::traits::FlashSession;
 use flash_core::types::{ProgramOptions, SectorInfo, TargetInfo, VerifyMismatch, VerifyReport};
 use md5::{Digest, Md5};
 
-use crate::link::{check_sector_alignment, EspLink, SECTOR_SIZE};
+use crate::link::{erase_span, EspLink, SECTOR_SIZE};
 
 /// How much is read back at a time when a verify falls back to comparing bytes.
 const READ_CHUNK: u32 = 32 * 1024;
@@ -172,8 +172,10 @@ impl FlashSession for EspSession {
         length: u32,
         cb: Option<&dyn ProgressCallback>,
     ) -> Result<(), FlashError> {
+        // Erasing is sector-granular, so a region that ends mid-sector still
+        // erases to the end of that sector.
+        let (start, length) = erase_span(start, length)?;
         self.check_range(start, length)?;
-        check_sector_alignment(start, length)?;
 
         let started = Instant::now();
         self.emit(
@@ -434,10 +436,26 @@ mod tests {
     }
 
     #[test]
-    fn an_unaligned_erase_is_refused_rather_than_widened() {
+    fn an_erase_starting_mid_sector_is_refused() {
+        // Erasing from here would take the bytes in front of it as well.
         let mut s = session();
-        let err = s.erase_range(0x1000, 0x800, None).unwrap_err();
+        let err = s.erase_range(0x800, 0x1000, None).unwrap_err();
         assert!(matches!(err, FlashError::InvalidAddress { .. }));
+    }
+
+    #[test]
+    fn an_erase_ending_mid_sector_covers_that_whole_sector() {
+        // A sector is the smallest thing the chip can erase, and a real
+        // firmware image is never an exact multiple of one. Refusing the
+        // length would make such an image unflashable.
+        let mut s = session();
+        s.erase_range(0x1000, 0x800, None).unwrap();
+
+        let erased = s.read_memory(0x1000, 0x1000).unwrap();
+        assert!(
+            erased.iter().all(|b| *b == 0xFF),
+            "the sector the region ends in must be erased in full"
+        );
     }
 
     #[test]

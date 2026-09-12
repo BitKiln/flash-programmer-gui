@@ -72,19 +72,43 @@ pub trait EspLink: Send {
     fn close(&mut self) -> Result<(), FlashError>;
 }
 
-/// Rejects an unaligned erase rather than quietly erasing the neighbours.
-pub fn check_sector_alignment(offset: u32, size: u32) -> Result<(), FlashError> {
-    if !offset.is_multiple_of(SECTOR_SIZE) || !size.is_multiple_of(SECTOR_SIZE) {
+/// The sector-aligned span that covers `size` bytes at `offset`.
+///
+/// The **offset** has to sit on a sector boundary: starting mid-sector would
+/// erase the bytes in front of it, which the caller did not ask for and cannot
+/// get back.
+///
+/// The **length** is rounded up instead of rejected. A sector is the smallest
+/// thing the chip can erase, so covering a region always means erasing to the
+/// end of its last sector -- and demanding a multiple of 4096 would make any
+/// firmware whose size is not an exact multiple unflashable, which is nearly
+/// all of them. The rounding only ever touches the tail of the last sector the
+/// region already occupies.
+pub fn erase_span(offset: u32, size: u32) -> Result<(u32, u32), FlashError> {
+    if !offset.is_multiple_of(SECTOR_SIZE) {
         return Err(FlashError::InvalidAddress {
             address: offset,
             reason: format!(
-                "erase must be aligned to the {SECTOR_SIZE}-byte flash sector \
-                 (got offset 0x{offset:X}, length 0x{size:X}); \
-                 an unaligned erase would take the neighbouring sectors with it"
+                "an erase must start on a {SECTOR_SIZE}-byte flash sector boundary \
+                 (got 0x{offset:X}); starting mid-sector would erase the bytes in \
+                 front of it too"
             ),
         });
     }
-    Ok(())
+
+    let sectors = size.div_ceil(SECTOR_SIZE);
+    let aligned = sectors.checked_mul(SECTOR_SIZE).ok_or_else(|| {
+        FlashError::InvalidAddress {
+            address: offset,
+            reason: format!("0x{size:X} bytes rounds past the end of the address space"),
+        }
+    })?;
+    offset.checked_add(aligned).ok_or_else(|| FlashError::InvalidAddress {
+        address: offset,
+        reason: format!("0x{aligned:X} bytes from 0x{offset:X} runs past the end of flash"),
+    })?;
+
+    Ok((offset, aligned))
 }
 
 #[cfg(test)]
@@ -92,10 +116,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn alignment_is_required_in_both_offset_and_length() {
-        assert!(check_sector_alignment(0, SECTOR_SIZE).is_ok());
-        assert!(check_sector_alignment(SECTOR_SIZE, SECTOR_SIZE * 3).is_ok());
-        assert!(check_sector_alignment(0x1000, 0x800).is_err());
-        assert!(check_sector_alignment(0x800, 0x1000).is_err());
+    fn the_offset_must_sit_on_a_sector_boundary() {
+        assert!(erase_span(0, SECTOR_SIZE).is_ok());
+        assert!(erase_span(SECTOR_SIZE, SECTOR_SIZE * 3).is_ok());
+        assert!(erase_span(0x800, 0x1000).is_err());
+    }
+
+    #[test]
+    fn a_length_is_rounded_up_to_the_sector_rather_than_refused() {
+        // A real firmware image is not a multiple of the sector size, and
+        // refusing one would leave it unflashable.
+        assert_eq!(erase_span(0x1000, 0x1B5250).unwrap(), (0x1000, 0x1B6000));
+        assert_eq!(erase_span(0, 1).unwrap(), (0, SECTOR_SIZE));
+        assert_eq!(erase_span(0, 0).unwrap(), (0, 0));
     }
 }
