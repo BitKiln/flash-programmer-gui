@@ -23,6 +23,8 @@ fn lock_mock_flash() -> MutexGuard<'static, ()> {
     // Clean stale state so every test starts from a fresh mock flash
     let backing = std::env::temp_dir().join("flashgui_mock_flash_stm32f401re_default.bin");
     let _ = std::fs::remove_file(&backing);
+    let ram = std::env::temp_dir().join("flashgui_mock_flash_stm32f401re_default.ram.bin");
+    let _ = std::fs::remove_file(&ram);
     guard
 }
 
@@ -709,4 +711,266 @@ fn test_serial_outside_flash_is_rejected() {
     // An address outside the target's flash is a firmware/address error, the
     // same class the parser reports for an out-of-bounds image.
     assert_eq!(code, EXIT_FIRMWARE_PARSE_ERROR);
+}
+
+// ---------------------------------------------------------------------------
+// memory read/write
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_memory_write_is_visible_to_a_later_read() {
+    let _guard = lock_mock_flash();
+    let (code, stdout, stderr) = run_cli_capture(&[
+        "--mock",
+        "memory",
+        "--target",
+        "STM32F401RE",
+        "write",
+        "--address",
+        "0x20000004",
+        "--data",
+        "DEADBEEF",
+    ]);
+    assert_eq!(code, EXIT_SUCCESS, "stderr: {stderr}");
+    assert!(stdout.contains("Wrote 4 bytes"), "stdout: {stdout}");
+
+    let (code, stdout, stderr) = run_cli_capture(&[
+        "--mock",
+        "memory",
+        "--target",
+        "STM32F401RE",
+        "read",
+        "--address",
+        "0x20000000",
+        "--length",
+        "16",
+    ]);
+    assert_eq!(code, EXIT_SUCCESS, "stderr: {stderr}");
+    assert!(
+        stdout.contains("00 00 00 00 DE AD BE EF"),
+        "the dump must show the written bytes at the address they went to; stdout: {stdout}"
+    );
+}
+
+#[test]
+fn a_memory_write_into_flash_is_refused_as_an_argument_error() {
+    // The address came from the caller, so this is a usage error with its own
+    // exit code -- not a flash failure, and not a parse failure.
+    let _guard = lock_mock_flash();
+    let (code, _stdout, stderr) = run_cli_capture(&[
+        "--mock",
+        "memory",
+        "--target",
+        "STM32F401RE",
+        "write",
+        "--address",
+        "0x08000000",
+        "--data",
+        "00",
+    ]);
+    assert_eq!(code, EXIT_INVALID_ARGS_OR_PROFILE, "stderr: {stderr}");
+    assert!(
+        stderr.contains("program the image instead"),
+        "the message must name the path that erases; stderr: {stderr}"
+    );
+}
+
+#[test]
+fn an_incomplete_hex_byte_is_refused() {
+    let _guard = lock_mock_flash();
+    let (code, _stdout, stderr) = run_cli_capture(&[
+        "--mock",
+        "memory",
+        "--target",
+        "STM32F401RE",
+        "write",
+        "--address",
+        "0x20000000",
+        "--data",
+        "ABC",
+    ]);
+    assert_eq!(code, EXIT_INVALID_ARGS_OR_PROFILE, "stderr: {stderr}");
+    assert!(stderr.contains("incomplete"), "stderr: {stderr}");
+}
+
+#[test]
+fn memory_bytes_can_come_from_a_file_and_go_back_to_one() {
+    let _guard = lock_mock_flash();
+    let mut source = NamedTempFile::new().unwrap();
+    source.write_all(&[0x11, 0x22, 0x33, 0x44]).unwrap();
+    let source_path = source.path().to_string_lossy().to_string();
+
+    let (code, _stdout, stderr) = run_cli_capture(&[
+        "--mock",
+        "memory",
+        "--target",
+        "STM32F401RE",
+        "write",
+        "--address",
+        "0x20000000",
+        "--file",
+        &source_path,
+    ]);
+    assert_eq!(code, EXIT_SUCCESS, "stderr: {stderr}");
+
+    let dest = NamedTempFile::new().unwrap();
+    let dest_path = dest.path().to_string_lossy().to_string();
+    let (code, _stdout, stderr) = run_cli_capture(&[
+        "--mock",
+        "memory",
+        "--target",
+        "STM32F401RE",
+        "read",
+        "--address",
+        "0x20000000",
+        "--length",
+        "4",
+        "--out",
+        &dest_path,
+    ]);
+    assert_eq!(code, EXIT_SUCCESS, "stderr: {stderr}");
+    assert_eq!(
+        std::fs::read(&dest_path).unwrap(),
+        vec![0x11, 0x22, 0x33, 0x44]
+    );
+}
+
+// ---------------------------------------------------------------------------
+// programming history
+// ---------------------------------------------------------------------------
+
+/// A history file of its own per test, so nothing reaches the real one.
+fn history_path(name: &str) -> PathBuf {
+    let path = std::env::temp_dir().join(format!("flashgui_cli_history_{name}.jsonl"));
+    let _ = std::fs::remove_file(&path);
+    path
+}
+
+#[test]
+fn a_flash_is_recorded_with_the_checksum_of_what_was_written() {
+    let _guard = lock_mock_flash();
+    let history = history_path("flash");
+    let hex = fixture_path("tests/fixtures/valid_stm32_single_segment.hex");
+
+    let (code, _stdout, stderr) = run_cli_capture(&[
+        "--mock",
+        "--history-file",
+        &history.to_string_lossy(),
+        "flash",
+        &hex.to_string_lossy(),
+        "--target",
+        "STM32F401RE",
+    ]);
+    assert_eq!(code, EXIT_SUCCESS, "stderr: {stderr}");
+
+    let (code, stdout, stderr) = run_cli_capture(&[
+        "--mock",
+        "--history-file",
+        &history.to_string_lossy(),
+        "history",
+    ]);
+    assert_eq!(code, EXIT_SUCCESS, "stderr: {stderr}");
+    assert!(stdout.contains("flash"), "stdout: {stdout}");
+    assert!(stdout.contains("succeeded"), "stdout: {stdout}");
+    // The checksum is the point: a file name does not say which build this was.
+    assert!(stdout.contains("crc32 0x"), "stdout: {stdout}");
+}
+
+#[test]
+fn a_failure_is_recorded_too() {
+    let _guard = lock_mock_flash();
+    let history = history_path("failure");
+    let hex = fixture_path("tests/fixtures/valid_stm32_single_segment.hex");
+
+    // Verifying an image that is not on the blank mock target fails.
+    let (code, _stdout, _stderr) = run_cli_capture(&[
+        "--mock",
+        "--history-file",
+        &history.to_string_lossy(),
+        "verify",
+        &hex.to_string_lossy(),
+        "--target",
+        "STM32F401RE",
+    ]);
+    assert_eq!(code, EXIT_FLASH_VERIFY_ERROR);
+
+    let (_code, stdout, _stderr) = run_cli_capture(&[
+        "--mock",
+        "--history-file",
+        &history.to_string_lossy(),
+        "history",
+        "--failures",
+    ]);
+    assert!(stdout.contains("verify"), "stdout: {stdout}");
+    assert!(stdout.contains("failed"), "stdout: {stdout}");
+    // A failure carries why, which is what anyone reading the history wants.
+    assert!(stdout.contains("--"), "stdout: {stdout}");
+}
+
+#[test]
+fn a_simulated_run_stays_out_of_the_default_history() {
+    // The safety property: nothing a mock run does can appear in the history a
+    // production line reads. Without --history-file there is nowhere to write.
+    let _guard = lock_mock_flash();
+    let hex = fixture_path("tests/fixtures/valid_stm32_single_segment.hex");
+    let before = flash_core::history::read_records(None, None)
+        .map(|r| r.len())
+        .unwrap_or(0);
+
+    let (code, _stdout, stderr) = run_cli_capture(&[
+        "--mock",
+        "flash",
+        &hex.to_string_lossy(),
+        "--target",
+        "STM32F401RE",
+    ]);
+    assert_eq!(code, EXIT_SUCCESS, "stderr: {stderr}");
+
+    let after = flash_core::history::read_records(None, None)
+        .map(|r| r.len())
+        .unwrap_or(0);
+    assert_eq!(before, after, "a mock run must not touch the real history");
+}
+
+#[test]
+fn the_history_filters_by_target_before_it_limits() {
+    let _guard = lock_mock_flash();
+    let history = history_path("filter");
+
+    for target in ["STM32F401RE", "STM32F103C8"] {
+        let (code, _stdout, stderr) = run_cli_capture(&[
+            "--mock",
+            "--history-file",
+            &history.to_string_lossy(),
+            "erase",
+            "--target",
+            target,
+            "--full",
+        ]);
+        assert_eq!(code, EXIT_SUCCESS, "stderr: {stderr}");
+    }
+
+    let (_code, stdout, _stderr) = run_cli_capture(&[
+        "--mock",
+        "--history-file",
+        &history.to_string_lossy(),
+        "history",
+        "--target",
+        "stm32f401re",
+    ]);
+    assert!(stdout.contains("STM32F401RE"), "stdout: {stdout}");
+    assert!(!stdout.contains("STM32F103C8"), "stdout: {stdout}");
+}
+
+#[test]
+fn an_empty_history_says_so_rather_than_printing_nothing() {
+    let _guard = lock_mock_flash();
+    let history = history_path("empty");
+    let (code, stdout, _stderr) = run_cli_capture(&[
+        "--history-file",
+        &history.to_string_lossy(),
+        "history",
+    ]);
+    assert_eq!(code, EXIT_SUCCESS);
+    assert!(stdout.contains("No programming history yet"), "stdout: {stdout}");
 }

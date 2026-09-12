@@ -13,6 +13,8 @@ import type {
   ProfileSummary,
   TargetSuggestion,
   MemoryRead,
+  FlashMapInfo,
+  HistoryRecord,
   BatchOptions,
   BatchReport,
 } from "../types";
@@ -359,6 +361,58 @@ export function useFlashProgrammer() {
     [addLog]
   );
 
+  /// What has been programmed, newest first. Shared with the CLI, which
+  /// appends to the same file.
+  const readHistory = useCallback(
+    async (limit?: number): Promise<HistoryRecord[]> => {
+      try {
+        return await invoke<HistoryRecord[]>("programming_history", { limit });
+      } catch (err) {
+        addLog("error", `Could not read the programming history: ${err}`);
+        return [];
+      }
+    },
+    [addLog]
+  );
+
+  /// The connected target's flash geometry, sector by sector.
+  const readFlashMap = useCallback(async (): Promise<FlashMapInfo | null> => {
+    try {
+      return await invoke<FlashMapInfo>("flash_map");
+    } catch (err) {
+      addLog("error", `Could not read the flash map: ${err}`);
+      return null;
+    }
+  }, [addLog]);
+
+  /// Writes bytes straight onto the target bus: RAM, registers, option bytes.
+  ///
+  /// Not a flash path. Nothing is erased first, so the backend refuses an
+  /// address inside flash rather than leaving a half-written sector.
+  const writeMemory = useCallback(
+    async (address: number, bytes: number[]): Promise<boolean> => {
+      try {
+        const message = await invoke<string>("write_memory", { address, bytes });
+        addLog("success", message);
+        return true;
+      } catch (err) {
+        addLog("error", `Memory write failed: ${err}`);
+        return false;
+      }
+    },
+    [addLog]
+  );
+
+  /// Whether the connected session can write memory at all. Asked before the
+  /// editor is offered, so nobody types a value whose write would be refused.
+  const canWriteMemory = useCallback(async (): Promise<boolean> => {
+    try {
+      return await invoke<boolean>("can_write_memory");
+    } catch {
+      return false;
+    }
+  }, []);
+
   /// Bytes the loaded image places in a window, `null` where it covers nothing.
   const readFirmwareWindow = useCallback(
     async (address: number, length: number): Promise<(number | null)[] | null> => {
@@ -672,6 +726,10 @@ export function useFlashProgrammer() {
     resetTarget,
     cancelOperation,
     readMemory,
+    readFlashMap,
+    readHistory,
+    writeMemory,
+    canWriteMemory,
     readFirmwareWindow,
     saveMemoryRegion,
     listTargetSuggestions,

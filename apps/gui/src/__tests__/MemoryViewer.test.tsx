@@ -154,4 +154,104 @@ describe("MemoryViewer", () => {
     const mismatch = await screen.findByTitle("Firmware has 12");
     expect(mismatch.textContent).toBe("00");
   });
+
+  describe("writing", () => {
+    /// A session that can write memory, with a page of readable bytes.
+    function writable() {
+      invoke.mockImplementation((command: string) => {
+        if (command === "can_write_memory") return Promise.resolve(true);
+        if (command === "read_memory") {
+          return Promise.resolve({ address: 0x20000000, bytes: page(0) });
+        }
+        if (command === "write_memory") return Promise.resolve("Wrote 4 bytes");
+        return Promise.resolve(null);
+      });
+    }
+
+    async function openEditor() {
+      writable();
+      render(
+        <AppProvider>
+          <Connected />
+        </AppProvider>
+      );
+      const edit = await screen.findByRole("button", { name: "Edit" });
+      fireEvent.click(edit);
+      return screen.getByLabelText("Bytes to write");
+    }
+
+    it("is not offered when the backend cannot write memory", async () => {
+      invoke.mockImplementation((command: string) => {
+        if (command === "can_write_memory") return Promise.resolve(false);
+        return Promise.resolve(null);
+      });
+
+      render(
+        <AppProvider>
+          <Connected />
+        </AppProvider>
+      );
+
+      await waitFor(() =>
+        expect(invoke).toHaveBeenCalledWith("can_write_memory")
+      );
+      expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
+    });
+
+    it("sends the parsed bytes to the address given", async () => {
+      const data = await openEditor();
+      fireEvent.change(screen.getByLabelText("Write address"), {
+        target: { value: "0x20000004" },
+      });
+      fireEvent.change(data, { target: { value: "de ad be ef" } });
+      fireEvent.click(screen.getByRole("button", { name: "Write" }));
+
+      await waitFor(() =>
+        expect(invoke).toHaveBeenCalledWith("write_memory", {
+          address: 0x20000004,
+          bytes: [0xde, 0xad, 0xbe, 0xef],
+        })
+      );
+    });
+
+    it("refuses an address inside flash without a round trip", async () => {
+      const data = await openEditor();
+      fireEvent.change(screen.getByLabelText("Write address"), {
+        target: { value: "0x08000000" },
+      });
+      fireEvent.change(data, { target: { value: "00" } });
+      fireEvent.click(screen.getByRole("button", { name: "Write" }));
+
+      expect(await screen.findByText(/That address is in flash/)).toBeTruthy();
+      expect(invoke).not.toHaveBeenCalledWith("write_memory", expect.anything());
+    });
+
+    it("refuses an incomplete byte rather than padding it", async () => {
+      const data = await openEditor();
+      fireEvent.change(screen.getByLabelText("Write address"), {
+        target: { value: "0x20000000" },
+      });
+      fireEvent.change(data, { target: { value: "ABC" } });
+      fireEvent.click(screen.getByRole("button", { name: "Write" }));
+
+      expect(await screen.findByText(/odd number of digits/)).toBeTruthy();
+      expect(invoke).not.toHaveBeenCalledWith("write_memory", expect.anything());
+    });
+
+    it("reads the page back after a write rather than assuming it took", async () => {
+      const data = await openEditor();
+      invoke.mockClear();
+      fireEvent.change(screen.getByLabelText("Write address"), {
+        target: { value: "0x20000000" },
+      });
+      fireEvent.change(data, { target: { value: "FF" } });
+      fireEvent.click(screen.getByRole("button", { name: "Write" }));
+
+      await waitFor(() =>
+        expect(
+          invoke.mock.calls.filter((call) => call[0] === "read_memory").length
+        ).toBeGreaterThan(0)
+      );
+    });
+  });
 });

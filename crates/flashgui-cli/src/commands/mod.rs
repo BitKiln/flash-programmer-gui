@@ -2,6 +2,8 @@ pub mod batch;
 pub mod devices;
 pub mod erase;
 pub mod flash;
+pub mod history;
+pub mod memory;
 pub mod profile;
 pub mod reset;
 pub mod verify;
@@ -241,6 +243,22 @@ pub fn is_supported_target(target: &str, mock: bool) -> bool {
     }
 }
 
+/// Appends one record to the programming history.
+///
+/// A simulated run says nothing about a board, so it never reaches the default
+/// history a production line reads -- but it is still written when
+/// `--history-file` names one explicitly, which is what makes the recording
+/// testable without hardware.
+///
+/// A history that cannot be written never fails the programming just done.
+pub fn record_history(cli: &Cli, record: flash_core::HistoryRecord) {
+    let path = cli.history_file.as_deref().map(std::path::Path::new);
+    if cli.mock && path.is_none() {
+        return;
+    }
+    flash_core::history::record_quietly(&record, path);
+}
+
 /// Computes the persistent backing file path for mock flash simulation across CLI invocations.
 pub fn mock_backing_file_path(target_name: &str, probe_id: Option<&str>) -> PathBuf {
     let probe_clean = probe_id
@@ -254,6 +272,16 @@ pub fn mock_backing_file_path(target_name: &str, probe_id: Option<&str>) -> Path
         "flashgui_mock_flash_{}_{}.bin",
         target_clean, probe_clean
     ))
+}
+
+/// Backing file for the simulated target's RAM.
+///
+/// Kept alongside the flash image because a real target keeps its RAM while it
+/// stays powered: a write in one invocation that read back as zeros in the next
+/// would look like a write that did not take.
+pub fn mock_ram_backing_file_path(target_name: &str, probe_id: Option<&str>) -> PathBuf {
+    let flash = mock_backing_file_path(target_name, probe_id);
+    flash.with_extension("ram.bin")
 }
 
 /// Establishes target connection session, restoring non-volatile mock flash memory if in mock mode.
@@ -282,6 +310,13 @@ pub fn open_session(
                                 config.probe_id.as_deref() == Some(&p.identifier)
                             });
                         }
+                        let ram_backing =
+                            mock_ram_backing_file_path(&target.name, config.probe_id.as_deref());
+                        if let Ok(ram) = fs::read(&ram_backing) {
+                            if ram.len() == s.ram.len() {
+                                s.ram = ram;
+                            }
+                        }
                         return Ok(Box::new(s));
                     }
                 }
@@ -306,6 +341,14 @@ pub fn persist_mock_session(
             if let Ok(data) = session.read_memory(flash_base, flash_size) {
                 let backing = mock_backing_file_path(&target_name, probe_id);
                 let _ = fs::write(&backing, data);
+            }
+            if let Some((ram_base, ram_size)) =
+                session.target_info().map(|t| (t.ram_base, t.ram_size))
+            {
+                if let Ok(ram) = session.read_memory(ram_base, ram_size) {
+                    let backing = mock_ram_backing_file_path(&target_name, probe_id);
+                    let _ = fs::write(&backing, ram);
+                }
             }
         }
     }

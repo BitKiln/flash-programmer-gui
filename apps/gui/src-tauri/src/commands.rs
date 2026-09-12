@@ -468,6 +468,7 @@ pub async fn connect_probe(
 
         let target_info = session.target_info().cloned();
         let cancellable = cancellable_stages(session.as_ref());
+        *state.probe_id.lock().map_err(|e| e.to_string())? = config.probe_id.clone();
         *state.session.lock().map_err(|e| e.to_string())? = Some(session);
 
         match target_info {
@@ -598,9 +599,51 @@ pub async fn flash_firmware(
             .as_mut()
             .ok_or_else(|| "No active session. Connect to a probe first.".to_string())?;
 
-        let result =
-            FlashManager::execute_flash(session.as_mut(), &image, &options, Some(&callback))
-                .map_err(|e| describe_failure(&app, &state, e))?;
+        let result = match FlashManager::execute_flash(
+            session.as_mut(),
+            &image,
+            &options,
+            Some(&callback),
+        ) {
+            Ok(result) => result,
+            Err(e) => {
+                let cancelled = matches!(e, flash_core::FlashError::OperationCancelled);
+                let message = describe_failure(&app, &state, e);
+                drop(session_guard);
+                let mut record = history_for(
+                    &state,
+                    flash_core::Operation::Flash,
+                    if cancelled {
+                        flash_core::Outcome::Cancelled
+                    } else {
+                        flash_core::Outcome::Failed
+                    },
+                );
+                if let Some(ref mut record) = record {
+                    record.file_path = Some(path.clone());
+                    record.image_crc32 = Some(image.metadata.crc32);
+                    record.message = message.clone();
+                }
+                record_history(record);
+                return Err(message);
+            }
+        };
+        drop(session_guard);
+
+        let mut record = history_for(
+            &state,
+            flash_core::Operation::Flash,
+            flash_core::Outcome::Succeeded,
+        );
+        if let Some(ref mut record) = record {
+            record.file_path = Some(path.clone());
+            record.image_crc32 = Some(image.metadata.crc32);
+            record.bytes = Some(result.bytes_flashed as u64);
+            record.duration_ms = result.duration_ms;
+            record.verified = result.verify_report.as_ref().is_some_and(|r| r.success);
+            record.message = result.message.clone();
+        }
+        record_history(record);
 
         Ok(FlashResultDto {
             success: result.success,
@@ -628,11 +671,41 @@ pub async fn erase_chip(app: AppHandle, state: State<'_, AppState>) -> Result<St
             .as_mut()
             .ok_or_else(|| "No active session. Connect to a probe first.".to_string())?;
 
-        session
-            .erase_all(Some(&callback))
-            .map_err(|e| describe_failure(&app, &state, e))?;
+        let outcome = session.erase_all(Some(&callback));
+        drop(session_guard);
 
-        Ok("Chip erased successfully".to_string())
+        match outcome {
+            Ok(()) => {
+                let mut record = history_for(
+                    &state,
+                    flash_core::Operation::Erase,
+                    flash_core::Outcome::Succeeded,
+                );
+                if let Some(ref mut record) = record {
+                    record.message = "Full chip erase".to_string();
+                }
+                record_history(record);
+                Ok("Chip erased successfully".to_string())
+            }
+            Err(e) => {
+                let cancelled = matches!(e, flash_core::FlashError::OperationCancelled);
+                let message = describe_failure(&app, &state, e);
+                let mut record = history_for(
+                    &state,
+                    flash_core::Operation::Erase,
+                    if cancelled {
+                        flash_core::Outcome::Cancelled
+                    } else {
+                        flash_core::Outcome::Failed
+                    },
+                );
+                if let Some(ref mut record) = record {
+                    record.message = message.clone();
+                }
+                record_history(record);
+                Err(message)
+            }
+        }
     })
     .await
 }
@@ -659,9 +732,49 @@ pub async fn verify_firmware(
             .as_mut()
             .ok_or_else(|| "No active session. Connect to a probe first.".to_string())?;
 
-        let report = session
-            .verify(&image.segments, Some(&callback))
-            .map_err(|e| describe_failure(&app, &state, e))?;
+        let outcome = session.verify(&image.segments, Some(&callback));
+        drop(session_guard);
+
+        let report = match outcome {
+            Ok(report) => report,
+            Err(e) => {
+                let message = describe_failure(&app, &state, e);
+                let mut record = history_for(
+                    &state,
+                    flash_core::Operation::Verify,
+                    flash_core::Outcome::Failed,
+                );
+                if let Some(ref mut record) = record {
+                    record.file_path = Some(path.clone());
+                    record.image_crc32 = Some(image.metadata.crc32);
+                    record.message = message.clone();
+                }
+                record_history(record);
+                return Err(message);
+            }
+        };
+
+        let mut record = history_for(
+            &state,
+            flash_core::Operation::Verify,
+            if report.success {
+                flash_core::Outcome::Succeeded
+            } else {
+                flash_core::Outcome::Failed
+            },
+        );
+        if let Some(ref mut record) = record {
+            record.file_path = Some(path.clone());
+            record.image_crc32 = Some(image.metadata.crc32);
+            record.bytes = Some(report.bytes_verified as u64);
+            record.verified = report.success;
+            record.message = if report.success {
+                "Verified against the target".to_string()
+            } else {
+                format!("{} byte(s) differ", report.mismatches.len())
+            };
+        }
+        record_history(record);
 
         Ok(VerifyResultDto {
             success: report.success,
@@ -1122,6 +1235,178 @@ pub async fn read_memory(
             .map_err(|e| e.to_string())?;
 
         Ok(MemoryReadDto { address, bytes })
+    })
+    .await
+}
+
+/// Starts a history record for the connected target.
+///
+/// A simulator session is not recorded: it says nothing about a board, and a
+/// history a production line reads must not contain runs that never happened.
+fn history_for(
+    state: &AppState,
+    operation: flash_core::Operation,
+    outcome: flash_core::Outcome,
+) -> Option<flash_core::HistoryRecord> {
+    let probe = state.probe_id.lock().ok()?.clone();
+    if probe.as_deref().is_some_and(|p| p.starts_with("mock:")) {
+        return None;
+    }
+    let target = state
+        .session
+        .lock()
+        .ok()?
+        .as_ref()?
+        .target_info()?
+        .name
+        .clone();
+
+    let mut record = flash_core::HistoryRecord::now(operation, outcome, target);
+    record.probe = probe;
+    Some(record)
+}
+
+/// Records `record`, reporting nothing: a history that cannot be written must
+/// not fail the programming that was just done.
+fn record_history(record: Option<flash_core::HistoryRecord>) {
+    if let Some(record) = record {
+        flash_core::history::record_quietly(&record, None);
+    }
+}
+
+/// The programming history, newest first.
+#[tauri::command]
+pub fn programming_history(
+    limit: Option<usize>,
+) -> Result<Vec<flash_core::HistoryRecord>, String> {
+    flash_core::history::read_records(None, limit.or(Some(100))).map_err(|e| e.to_string())
+}
+
+/// One erasable unit of the target's flash.
+#[derive(Debug, Clone, Serialize)]
+pub struct SectorDto {
+    pub index: u32,
+    pub address: u32,
+    pub size: u32,
+}
+
+/// The target's flash geometry, sector by sector.
+#[derive(Debug, Clone, Serialize)]
+pub struct FlashMapDto {
+    pub flash_base: u32,
+    pub flash_size: u32,
+    pub sectors: Vec<SectorDto>,
+    /// True when the backend reports no sector list at all, so the map has to
+    /// fall back on `page_size`. Uniform-geometry parts are common; a map that
+    /// silently invented sector boundaries would not be.
+    pub geometry_estimated: bool,
+}
+
+/// Flash geometry of the connected target.
+///
+/// The sector list is the erase granularity, which is what decides how much
+/// of the part an erase actually touches. `target_info` carries only the
+/// count, because the connection panel has no use for 256 boundaries.
+#[tauri::command]
+pub fn flash_map(state: State<'_, AppState>) -> Result<FlashMapDto, String> {
+    let session = state.session.lock().map_err(|e| e.to_string())?;
+    let info = session
+        .as_ref()
+        .and_then(|s| s.target_info())
+        .ok_or_else(|| "No active session. Connect to a probe first.".to_string())?;
+
+    let estimated = info.sectors.is_empty();
+    let sectors = if estimated {
+        // A uniform part: one entry per page, which is the erase unit there.
+        let size = info.page_size.max(1);
+        let count = info.flash_size / size;
+        (0..count)
+            .map(|i| SectorDto {
+                index: i,
+                address: info.flash_base + i * size,
+                size,
+            })
+            .collect()
+    } else {
+        info.sectors
+            .iter()
+            .map(|s| SectorDto {
+                index: s.index,
+                address: s.address,
+                size: s.size,
+            })
+            .collect()
+    };
+
+    Ok(FlashMapDto {
+        flash_base: info.flash_base,
+        flash_size: info.flash_size,
+        sectors,
+        geometry_estimated: estimated,
+    })
+}
+
+/// Largest region a single memory write may carry.
+///
+/// A direct memory write is for registers and small configuration fields, not
+/// for images: anything image-sized belongs on the flash path, which erases
+/// and verifies.
+const MAX_WRITE_BYTES: usize = 4 * 1024;
+
+/// Whether the connected session can write target memory directly.
+///
+/// The editor is offered only when the answer is yes, so nobody types a value
+/// into a field whose write would be refused.
+#[tauri::command]
+pub fn can_write_memory(state: State<'_, AppState>) -> Result<bool, String> {
+    let session = state.session.lock().map_err(|e| e.to_string())?;
+    Ok(session.as_ref().is_some_and(|s| s.can_write_memory()))
+}
+
+/// Writes `bytes` to target memory at `address`.
+///
+/// This is the bus, not the flash controller. The backend refuses an address
+/// inside flash, because nothing here erases first.
+#[tauri::command]
+pub async fn write_memory(
+    state: State<'_, AppState>,
+    address: u32,
+    bytes: Vec<u8>,
+) -> Result<String, String> {
+    if bytes.is_empty() {
+        return Err("Nothing to write".to_string());
+    }
+    if bytes.len() > MAX_WRITE_BYTES {
+        return Err(format!(
+            "Write of {} bytes exceeds the {} byte limit for a direct memory write; \
+             program an image of this size instead, so it is erased and verified",
+            bytes.len(),
+            MAX_WRITE_BYTES
+        ));
+    }
+    if address.checked_add(bytes.len() as u32).is_none() {
+        return Err("Write range overflows the 32-bit address space".to_string());
+    }
+
+    let count = bytes.len();
+    let state = (*state).clone();
+    in_background(move || {
+        let mut session_guard = state.session.lock().map_err(|e| e.to_string())?;
+        let session = session_guard
+            .as_mut()
+            .ok_or_else(|| "No active session. Connect to a probe first.".to_string())?;
+
+        if !session.can_write_memory() {
+            return Err("This connection cannot write target memory directly: it reaches \
+                        the flash controller only. A debug probe is needed for RAM, \
+                        registers and option bytes."
+                .to_string());
+        }
+
+        session
+            .write_memory(address, &bytes)
+            .map_err(|e| e.to_string())?;
+        Ok(format!("Wrote {count} bytes to {address:#010X}"))
     })
     .await
 }

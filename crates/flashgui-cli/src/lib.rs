@@ -59,6 +59,12 @@ where
         Commands::Reset(ref reset_args) => {
             commands::reset::handle_reset(&cli, reset_args, stdout, stderr)
         }
+        Commands::History(ref history_args) => {
+            commands::history::handle_history(&cli, history_args, stdout, stderr)
+        }
+        Commands::Memory(ref memory_args) => {
+            commands::memory::handle_memory(&cli, memory_args, stdout, stderr)
+        }
         Commands::Profile { ref action } => {
             commands::profile::handle_profile(&cli, action, stdout, stderr)
         }

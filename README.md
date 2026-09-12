@@ -258,6 +258,49 @@ FLASHGUI_HW_TARGET=STM32U575ZITxQ cargo test -p e2e-tests --test hardware -- --i
 
 Set `FLASHGUI_HW_PROBE` as well when more than one probe is attached.
 
+## Memory, flash map, and history
+
+**Reading and writing memory.** `memory read` prints a hex dump; `memory write`
+takes hex digits or a file:
+
+```bash
+flashgui-cli memory --target STM32F401RE read --address 0x20000000 --length 256
+flashgui-cli memory --target STM32F401RE write --address 0x20000004 --data DEADBEEF
+```
+
+This is the bus rather than the flash controller, so nothing on the path
+erases. A write into the flash region is refused, naming `flash` as the
+command that erases first, and a connection with no bus access -- the ESP
+serial bootloader -- says so before anything is attempted. The desktop
+application offers the same write from the memory viewer, only where the
+backend reports it can do it, and reads the page back afterwards rather than
+showing what was asked for.
+
+**Flash map.** The desktop **Flash Map** tab shows the part as erase units with
+the loaded image over it. A sector is the smallest erasable thing, so a 1 KB
+image at the start of an STM32F4 clears the whole 16 KB sector it lands in; the
+tab says how many sectors an image actually erases, which is not the same
+number as its size.
+
+**Programming history.** Every flash, erase and verify against a real target is
+recorded in `history.jsonl` in the configuration directory -- by this CLI and
+by the desktop application, in the same file:
+
+```bash
+flashgui-cli history --limit 10
+flashgui-cli history --failures
+```
+
+Each record keeps the image's CRC32, which is what identifies a build: the same
+path holds a different image after every rebuild. It also keeps whether the
+image was verified, because a flash that was never checked against the target
+is a weaker claim than one that was. Failures and cancellations are recorded as
+well as successes.
+
+Simulated runs are left out. A mock flash says nothing about a board, and a
+history read on a production line must not contain runs that never happened.
+`--history-file` points at a different file, for a test or a separate log.
+
 ## Status
 
 | Component | State |
@@ -271,12 +314,16 @@ Set `FLASHGUI_HW_PROBE` as well when more than one probe is attached.
 | Desktop GUI — connection, firmware, controls, progress, console | Done |
 | Cancellation, pushed telemetry, segment inspector, GUI profiles | Done |
 | Memory viewer — hex view, firmware comparison, save region | Done |
+| Memory writing — `memory read`/`write`, editor in the viewer | Done |
+| Flash map — sector geometry with the image's footprint over it | Done |
+| Programming history — shared file, `history` command, History tab | Done |
 | Batch / production mode — `flash-core` runner and `batch` CLI command | Done |
 | Batch mode in the desktop application — Batch tab, live unit table, log file | Done |
 | Serial-number programming — CLI flags, batch integration, desktop Batch tab | Done |
 | Silicon Labs EFR32/EFM32 — through probe-rs and J-Link | Untested on hardware |
 | ESP32 over the serial ROM bootloader — `esp:` backend, CLI and desktop | Verified on an ESP-WROOM-32 |
 | Runtime chip descriptions (`--target-yaml`) for parts probe-rs lacks | Done |
+| Option and configuration bytes, with irreversible-field interlocks | Planned |
 | OpenOCD backend | Planned (v0.5) |
 
 ## Licence

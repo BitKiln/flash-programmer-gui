@@ -5,7 +5,8 @@ use flash_core::types::{ConnectionConfig, ProgramOptions, ResetType};
 
 use crate::cli::{Cli, FlashArgs};
 use crate::commands::{
-    get_backend, open_session, persist_mock_session, resolve_flash_params, ResolvedFlash,
+    get_backend, open_session, persist_mock_session, record_history, resolve_flash_params,
+    ResolvedFlash,
 };
 use crate::exit_codes::CliError;
 use crate::output::CliProgressCallback;
@@ -50,6 +51,13 @@ pub fn handle_flash(
 
     let mut session = open_session(backend.as_ref(), &conn_config, cli.mock)?;
 
+    // The history is written from what actually happened, so the facts that
+    // describe the attempt are gathered before it starts.
+    let history_probe = conn_config.probe_id.clone();
+    let history_target = conn_config.target_name.clone();
+    let history_path = file_path.clone();
+    let history_crc = firmware.metadata.crc32;
+
     // 4. Setup progress telemetry callback
     let (callback, output_buf) = CliProgressCallback::new(cli.quiet, cli.json);
 
@@ -89,6 +97,24 @@ pub fn handle_flash(
                     return Err(err);
                 }
             }
+            let mut record = flash_core::HistoryRecord::now(
+                flash_core::Operation::Flash,
+                flash_core::Outcome::Succeeded,
+                &history_target,
+            );
+            record.probe = history_probe.clone();
+            record.file_path = Some(history_path.clone());
+            record.image_crc32 = Some(history_crc);
+            record.bytes = Some(res.bytes_flashed as u64);
+            record.duration_ms = res.duration_ms;
+            record.verified = res.verify_report.as_ref().is_some_and(|r| r.success);
+            record.serial = match serial_result {
+                Ok(Some(ref stamped)) => Some(stamped.clone()),
+                _ => None,
+            };
+            record.message = res.message.clone();
+            record_history(cli, record);
+
             callback.emit_complete(
                 Some(res.bytes_flashed),
                 res.verify_report.as_ref().map(|r| r.bytes_verified),
@@ -98,7 +124,25 @@ pub fn handle_flash(
             Ok(())
         }
         Err(err) => {
+            // A failure is the more important half of a history: a board that
+            // was not programmed is the one someone comes back asking about.
+            let cancelled = matches!(err, flash_core::FlashError::OperationCancelled);
             let cli_err = CliError::from(err);
+            let mut record = flash_core::HistoryRecord::now(
+                flash_core::Operation::Flash,
+                if cancelled {
+                    flash_core::Outcome::Cancelled
+                } else {
+                    flash_core::Outcome::Failed
+                },
+                &history_target,
+            );
+            record.probe = history_probe.clone();
+            record.file_path = Some(history_path.clone());
+            record.image_crc32 = Some(history_crc);
+            record.message = cli_err.message().to_string();
+            record_history(cli, record);
+
             callback.emit_error(cli_err.exit_code(), cli_err.message());
             Err(cli_err)
         }

@@ -37,7 +37,7 @@ either application knowing.
 | Crate | Holds | Depends on |
 |---|---|---|
 | `firmware-parser` | Intel HEX, raw binary, and ELF parsing into address-tagged segments | — |
-| `flash-core` | The two traits, the registry, orchestration, batch running, serial stamping, profiles, progress and cancellation | `firmware-parser` |
+| `flash-core` | The two traits, the registry, orchestration, batch running, serial stamping, profiles, programming history, progress and cancellation | `firmware-parser` |
 | `device-db` | Target aliases, the family/backend capability matrix, the generated support matrix | — |
 | `backends/probe-rs` | Arm targets through probe-rs | `flash-core`, `device-db`, `probe-rs` |
 | `backends/mock` | Simulated NOR flash with fault injection | `flash-core` |

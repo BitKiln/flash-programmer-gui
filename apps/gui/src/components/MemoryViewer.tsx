@@ -29,13 +29,45 @@ function parseAddress(value: string): number | null {
 }
 
 /**
+ * Parses a hex byte string such as `DEADBEEF` or `de ad be ef`.
+ *
+ * An odd number of digits is refused rather than padded: a missing nibble
+ * means the intended value is unknown, and guessing which end it belongs on
+ * would write the wrong byte.
+ */
+export function parseHexBytes(value: string): number[] | string {
+  const cleaned = value
+    .trim()
+    .replace(/^0[xX]/, "")
+    .replace(/[\s_,]/g, "");
+  if (!cleaned) return "Enter bytes as hex digits, such as DEADBEEF.";
+  if (!/^[0-9a-fA-F]+$/.test(cleaned)) {
+    return `"${value.trim()}" is not hex. Use digits 0-9 and A-F.`;
+  }
+  if (cleaned.length % 2 !== 0) {
+    return `"${value.trim()}" has an odd number of digits, so one byte is incomplete.`;
+  }
+  const bytes: number[] = [];
+  for (let i = 0; i < cleaned.length; i += 2) {
+    bytes.push(Number.parseInt(cleaned.slice(i, i + 2), 16));
+  }
+  return bytes;
+}
+
+/**
  * Hex view of target memory, with an optional comparison against the loaded
  * firmware so a mismatch is visible byte by byte rather than only as a failed
  * verify.
  */
 export function MemoryViewer() {
   const { state } = useAppContext();
-  const { readMemory, readFirmwareWindow, saveMemoryRegion } = useFlashProgrammer();
+  const {
+    readMemory,
+    readFirmwareWindow,
+    saveMemoryRegion,
+    writeMemory,
+    canWriteMemory,
+  } = useFlashProgrammer();
 
   const [addressInput, setAddressInput] = useState("");
   const [address, setAddress] = useState<number | null>(null);
@@ -44,8 +76,33 @@ export function MemoryViewer() {
   const [error, setError] = useState<string | null>(null);
   const [compare, setCompare] = useState(false);
   const [firmwareBytes, setFirmwareBytes] = useState<(number | null)[] | null>(null);
+  const [canWrite, setCanWrite] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editAddress, setEditAddress] = useState("");
+  const [editData, setEditData] = useState("");
+  const [editError, setEditError] = useState<string | null>(null);
+  const [isWriting, setIsWriting] = useState(false);
 
   const isConnected = state.connectionStatus === "connected";
+
+  // Whether the editor is offered at all is the backend's answer, not a guess
+  // from the transport: an ESP bootloader reaches flash and nothing else, and
+  // an editor that cannot write is worse than no editor.
+  useEffect(() => {
+    if (!isConnected) {
+      setCanWrite(false);
+      setEditing(false);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const allowed = await canWriteMemory();
+      if (!cancelled) setCanWrite(allowed);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isConnected, canWriteMemory]);
 
   // Default to the start of the target's flash once a target is known.
   useEffect(() => {
@@ -107,6 +164,57 @@ export function MemoryViewer() {
       }
     } catch {
       setError("Saving is only available in the desktop application.");
+    }
+  };
+
+  const openEditor = (at: number) => {
+    setEditAddress(formatAddress(at));
+    setEditData("");
+    setEditError(null);
+    setEditing(true);
+  };
+
+  const handleWrite = async () => {
+    const at = parseAddress(editAddress);
+    if (at === null) {
+      setEditError("Enter an address such as 0x20000000.");
+      return;
+    }
+    const parsed = parseHexBytes(editData);
+    if (typeof parsed === "string") {
+      setEditError(parsed);
+      return;
+    }
+    // The backend refuses this too, but saying it here costs no round trip and
+    // names the path that does erase.
+    const target = state.targetInfo;
+    if (
+      target &&
+      at < target.flash_base + target.flash_size &&
+      at + parsed.length > target.flash_base
+    ) {
+      setEditError(
+        "That address is in flash. A memory write does not erase, so it cannot " +
+          "write flash - program the image instead."
+      );
+      return;
+    }
+
+    setIsWriting(true);
+    setEditError(null);
+    try {
+      const ok = await writeMemory(at, parsed);
+      if (ok) {
+        setEditing(false);
+        setEditData("");
+        // Read back what is actually there rather than showing what was asked
+        // for: a register can ignore a write, or answer with something else.
+        if (address !== null) await read(address);
+      } else {
+        setEditError("The write was refused; see the console for details.");
+      }
+    } finally {
+      setIsWriting(false);
     }
   };
 
@@ -179,6 +287,15 @@ export function MemoryViewer() {
         >
           ⤓
         </button>
+        {canWrite && (
+          <button
+            onClick={() => (editing ? setEditing(false) : openEditor(address ?? 0))}
+            className="shrink-0 px-2.5 py-1.5 bg-bg-tertiary border border-gray-600 rounded text-sm text-gray-300 hover:bg-gray-600 transition-colors"
+            title="Write bytes to an address"
+          >
+            {editing ? "Cancel" : "Edit"}
+          </button>
+        )}
         <button
           onClick={() => step(PAGE_SIZE)}
           disabled={!isConnected || isReading || address === null}
@@ -188,6 +305,41 @@ export function MemoryViewer() {
           ↓
         </button>
       </div>
+
+      {editing && (
+        <div className="space-y-2 rounded border border-gray-700 bg-bg-primary p-2">
+          <div className="flex gap-2">
+            <input
+              aria-label="Write address"
+              value={editAddress}
+              onChange={(e) => setEditAddress(e.target.value)}
+              placeholder="0x20000000"
+              className="w-40 bg-bg-secondary border border-gray-600 rounded px-2 py-1.5 text-sm font-mono text-gray-200 focus:border-accent-red focus:outline-none"
+            />
+            <input
+              aria-label="Bytes to write"
+              value={editData}
+              onChange={(e) => setEditData(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && void handleWrite()}
+              placeholder="DEADBEEF"
+              className="flex-1 min-w-0 bg-bg-secondary border border-gray-600 rounded px-2 py-1.5 text-sm font-mono text-gray-200 focus:border-accent-red focus:outline-none"
+            />
+            <button
+              onClick={() => void handleWrite()}
+              disabled={isWriting}
+              className="shrink-0 px-3 py-1.5 bg-bg-tertiary border border-gray-600 rounded text-sm text-gray-200 hover:bg-gray-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {isWriting ? "Writing..." : "Write"}
+            </button>
+          </div>
+          <p className="text-xs text-gray-500">
+            Writes straight onto the bus, with no erase and no verify: RAM,
+            peripheral registers, and memory-mapped configuration such as option
+            bytes. Flash goes through Flash, which erases first.
+          </p>
+          {editError && <p className="text-xs text-accent-red">{editError}</p>}
+        </div>
+      )}
 
       {!isConnected && (
         <p className="text-xs text-gray-500">
@@ -216,18 +368,23 @@ export function MemoryViewer() {
                         const index = row * BYTES_PER_ROW + column;
                         const expected = firmwareBytes?.[index] ?? null;
                         const differs = expected !== null && expected !== byte;
+                        const byteAddress = rowAddress + column;
                         return (
                           <span
                             key={column}
-                            className={
+                            onClick={canWrite ? () => openEditor(byteAddress) : undefined}
+                            className={[
                               differs
                                 ? "text-accent-red font-bold mr-1"
-                                : "text-gray-300 mr-1"
-                            }
+                                : "text-gray-300 mr-1",
+                              canWrite ? "cursor-pointer hover:bg-gray-700" : "",
+                            ].join(" ")}
                             title={
                               differs
                                 ? `Firmware has ${formatByte(expected as number)}`
-                                : undefined
+                                : canWrite
+                                  ? `Write at ${formatAddress(byteAddress)}`
+                                  : undefined
                             }
                           >
                             {formatByte(byte)}
