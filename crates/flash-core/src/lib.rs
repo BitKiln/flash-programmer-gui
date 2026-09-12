@@ -3,6 +3,7 @@ pub mod error;
 pub mod manager;
 pub mod profile;
 pub mod progress;
+pub mod serial;
 pub mod traits;
 pub mod types;
 
@@ -24,6 +25,7 @@ pub use progress::{
     ClosureProgressCallback, FlashEvent, FlashStage, LogLevel, NoopProgressCallback,
     ProgressCallback, ProgressMetrics,
 };
+pub use serial::{program_serial, SerialAllocator, SerialConfig, SerialEncoding};
 pub use traits::{FlashBackend, FlashSession};
 pub use types::{
     ConnectionConfig, FlashResult, ProbeInfo, ProbeType, ProgramOptions, ResetType, SectorInfo,

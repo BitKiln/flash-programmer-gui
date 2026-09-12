@@ -148,6 +148,24 @@ boards are programmed, the prompts say which board to unplug or connect, and Sto
 A batch owns the probe for its whole duration, so the interactive session is dropped when one
 starts and you reconnect afterwards.
 
+### Serial numbers
+
+Both `flash` and `batch` can stamp a unique value into each board once the image
+itself is on it, so a failed flash never leaves a numbered but unprogrammed unit:
+
+```bash
+flashgui-cli batch build/app.elf --count 50   --serial-address 0x0801F800 --serial-format "ACME-{n:06}" --serial-start 1000
+```
+
+`{n}` is the counter and `{n:06}` pads it; `--serial-step` sets the increment. The value is
+written as ASCII padded to `--serial-width` bytes (default 16), or as a raw integer with
+`--serial-encoding u32le|u32be|u64le`. It is read back after writing unless `--no-serial-verify`
+is given, and it appears in the production log and in the desktop app's unit table.
+
+The address must be a flash location the firmware image does not itself write — normally a
+dedicated sector or a slot at the end of flash. A full chip erase erases it too, so a re-run of the
+same board is re-stamped rather than left with the old value.
+
 ### CI and scripting
 
 `--json` turns every status, progress, and completion message into NDJSON on stdout, and the exit
@@ -203,7 +221,7 @@ Set `FLASHGUI_HW_PROBE` as well when more than one probe is attached.
 | Memory viewer — hex view, firmware comparison, save region | Done |
 | Batch / production mode — `flash-core` runner and `batch` CLI command | Done |
 | Batch mode in the desktop application — Batch tab, live unit table, log file | Done |
-| Serial-number programming | Planned |
+| Serial-number programming — CLI flags, batch integration, desktop Batch tab | Done |
 
 ## Licence
 

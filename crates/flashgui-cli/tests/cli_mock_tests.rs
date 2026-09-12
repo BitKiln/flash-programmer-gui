@@ -540,7 +540,7 @@ fn test_batch_writes_csv_log() {
     let csv = std::fs::read_to_string(&log_path).expect("log written");
     let lines: Vec<&str> = csv.lines().collect();
     assert_eq!(lines.len(), 3, "header plus two units, got: {}", csv);
-    assert!(lines[0].starts_with("index,status,probe_serial,target"));
+    assert!(lines[0].starts_with("index,status,serial,probe_serial,target"));
     assert!(lines[1].starts_with("1,passed,"));
     assert!(lines[2].starts_with("2,passed,"));
 }
@@ -586,4 +586,88 @@ fn test_batch_json_stream_and_unsupported_target() {
         "immediate",
     ]);
     assert_eq!(code, EXIT_TARGET_CONNECTION_ERROR);
+}
+
+#[test]
+fn test_flash_stamps_a_serial_number() {
+    let _guard = lock_mock_flash();
+    let hex_file = fixture_path("tests/fixtures/valid_stm32_single_segment.hex");
+    let (code, stdout, stderr) = run_cli_capture(&[
+        "--mock",
+        "flash",
+        hex_file.to_str().unwrap(),
+        "--target",
+        "STM32F401RE",
+        "--serial-address",
+        "0x08010000",
+        "--serial-format",
+        "SN-{n:06}",
+        "--serial-start",
+        "7",
+    ]);
+
+    assert_eq!(code, EXIT_SUCCESS, "stderr: {}", stderr);
+    assert!(
+        stdout.contains("Serial number programmed: SN-000007"),
+        "stdout: {}",
+        stdout
+    );
+}
+
+#[test]
+fn test_batch_stamps_a_serial_per_board_and_logs_it() {
+    let _guard = lock_mock_flash();
+    let hex_file = fixture_path("tests/fixtures/valid_stm32_single_segment.hex");
+    let log = NamedTempFile::new().expect("temp log");
+    let log_path = log.path().to_path_buf();
+
+    let (code, stdout, stderr) = run_cli_capture(&[
+        "--mock",
+        "batch",
+        hex_file.to_str().unwrap(),
+        "--target",
+        "STM32F401RE",
+        "--count",
+        "3",
+        "--rearm",
+        "immediate",
+        "--serial-address",
+        "0x08010000",
+        "--serial-format",
+        "ACME-{n:04}",
+        "--serial-start",
+        "10",
+        "--serial-step",
+        "5",
+        "--log",
+        log_path.to_str().unwrap(),
+    ]);
+
+    assert_eq!(code, EXIT_SUCCESS, "stderr: {}", stderr);
+    for serial in ["ACME-0010", "ACME-0015", "ACME-0020"] {
+        assert!(stdout.contains(serial), "missing {} in: {}", serial, stdout);
+    }
+
+    let csv = std::fs::read_to_string(&log_path).expect("log written");
+    assert!(csv.lines().next().unwrap().starts_with("index,status,serial,"));
+    assert!(csv.contains(",ACME-0015,"), "log was: {}", csv);
+}
+
+#[test]
+fn test_serial_outside_flash_is_rejected() {
+    let _guard = lock_mock_flash();
+    let hex_file = fixture_path("tests/fixtures/valid_stm32_single_segment.hex");
+    let (code, _stdout, _stderr) = run_cli_capture(&[
+        "--mock",
+        "flash",
+        hex_file.to_str().unwrap(),
+        "--target",
+        "STM32F401RE",
+        "--serial-address",
+        "0x20000000",
+    ]);
+
+    // An address outside the target's flash is a firmware/address error, the
+    // same class the parser reports for an out-of-bounds image.
+    assert_eq!(code, EXIT_FIRMWARE_PARSE_ERROR);
 }

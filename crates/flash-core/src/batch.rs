@@ -90,6 +90,8 @@ pub struct UnitRecord {
     pub index: u32,
     pub status: UnitStatus,
     pub probe_serial: Option<String>,
+    /// Serial number stamped into this board, when serial programming is on.
+    pub serial: Option<String>,
     pub target: Option<String>,
     pub bytes_flashed: u32,
     pub verified: bool,
@@ -133,13 +135,14 @@ impl BatchReport {
     /// Renders the run as CSV, one row per unit, with a header line.
     pub fn to_csv(&self) -> String {
         let mut out = String::from(
-            "index,status,probe_serial,target,bytes_flashed,verified,duration_ms,started_unix_ms,message\n",
+            "index,status,serial,probe_serial,target,bytes_flashed,verified,duration_ms,started_unix_ms,message\n",
         );
         for r in &self.records {
             out.push_str(&format!(
-                "{},{},{},{},{},{},{},{},{}\n",
+                "{},{},{},{},{},{},{},{},{},{}\n",
                 r.index,
                 r.status.as_str(),
+                csv_field(r.serial.as_deref().unwrap_or("")),
                 csv_field(r.probe_serial.as_deref().unwrap_or("")),
                 csv_field(r.target.as_deref().unwrap_or("")),
                 r.bytes_flashed,
@@ -198,9 +201,10 @@ pub type SessionOpener<'a> =
     &'a mut dyn FnMut(&ConnectionConfig) -> Result<Box<dyn FlashSession>, FlashError>;
 
 /// Called after each unit so the caller can persist mock state, stamp a serial
-/// number, or run any other post-program step. Returning an error fails the
-/// unit.
-pub type UnitHook<'a> = &'a mut dyn FnMut(&mut dyn FlashSession, u32) -> Result<(), FlashError>;
+/// number, or run any other post-program step. A returned string is recorded as
+/// the unit's serial number; an error fails the unit.
+pub type UnitHook<'a> =
+    &'a mut dyn FnMut(&mut dyn FlashSession, u32) -> Result<Option<String>, FlashError>;
 
 fn unix_ms() -> u64 {
     SystemTime::now()
@@ -302,6 +306,7 @@ pub fn run_batch_with(
                     index,
                     status: UnitStatus::Failed,
                     probe_serial: config.connection.probe_id.clone(),
+                    serial: None,
                     target: None,
                     bytes_flashed: 0,
                     verified: false,
@@ -333,6 +338,7 @@ pub fn run_batch_with(
                 index,
                 status: UnitStatus::Passed,
                 probe_serial: config.connection.probe_id.clone(),
+                serial: None,
                 target: target_name.clone(),
                 bytes_flashed: result.bytes_flashed,
                 verified: result.verify_report.is_some(),
@@ -344,6 +350,7 @@ pub fn run_batch_with(
                 index,
                 status: UnitStatus::Failed,
                 probe_serial: config.connection.probe_id.clone(),
+                serial: None,
                 target: target_name.clone(),
                 bytes_flashed: 0,
                 verified: false,
@@ -354,9 +361,12 @@ pub fn run_batch_with(
         };
 
         if let Some(hook) = after_unit.as_deref_mut() {
-            if let Err(err) = hook(session.as_mut(), index) {
-                record.status = UnitStatus::Failed;
-                record.message = err.to_string();
+            match hook(session.as_mut(), index) {
+                Ok(serial) => record.serial = serial,
+                Err(err) => {
+                    record.status = UnitStatus::Failed;
+                    record.message = err.to_string();
+                }
             }
         }
 

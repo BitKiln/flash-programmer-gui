@@ -141,6 +141,59 @@ pub struct FlashArgs {
     /// Load options from named profile
     #[arg(long)]
     pub profile: Option<String>,
+
+    /// Stamp a serial number at this flash address (e.g. 0x0801F800)
+    #[arg(long)]
+    pub serial_address: Option<String>,
+
+    /// Serial template; {n} is the counter, {n:06} pads it to six digits
+    #[arg(long, default_value = "{n}")]
+    pub serial_format: String,
+
+    /// Counter value used for the first board
+    #[arg(long, default_value_t = 1)]
+    pub serial_start: u64,
+
+    /// Amount the counter advances after each board
+    #[arg(long, default_value_t = 1)]
+    pub serial_step: u64,
+
+    /// How the value is laid out in flash
+    #[arg(long, value_enum, default_value_t = SerialFormat::Ascii)]
+    pub serial_encoding: SerialFormat,
+
+    /// Bytes reserved for an ASCII serial field
+    #[arg(long, default_value_t = 16)]
+    pub serial_width: usize,
+
+    /// Skip reading the serial back after writing it
+    #[arg(long)]
+    pub no_serial_verify: bool,
+}
+
+/// Flash layout of a stamped serial number.
+#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SerialFormat {
+    /// Rendered text, padded to the field width with 0xFF
+    Ascii,
+    /// Counter as a little-endian u32
+    U32le,
+    /// Counter as a big-endian u32
+    U32be,
+    /// Counter as a little-endian u64
+    U64le,
+}
+
+impl From<SerialFormat> for flash_core::SerialEncoding {
+    fn from(value: SerialFormat) -> Self {
+        match value {
+            SerialFormat::Ascii => flash_core::SerialEncoding::Ascii,
+            SerialFormat::U32le => flash_core::SerialEncoding::U32Le,
+            SerialFormat::U32be => flash_core::SerialEncoding::U32Be,
+            SerialFormat::U64le => flash_core::SerialEncoding::U64Le,
+        }
+    }
 }
 
 /// How the runner waits for the next board between units.

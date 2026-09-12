@@ -27,6 +27,8 @@ use flash_core::ProbeRsLiveBackend;
 #[derive(Debug, Clone)]
 pub struct ResolvedFlash {
     pub file_path: String,
+    /// Serial-number stamping, when an address was given.
+    pub serial: Option<flash_core::SerialConfig>,
     pub target: String,
     pub probe: Option<String>,
     pub interface: Protocol,
@@ -128,8 +130,23 @@ pub fn resolve_flash_params(cli: &Cli, args: &FlashArgs) -> Result<ResolvedFlash
     let full_erase =
         args.full_erase || profile.as_ref().map(|p| p.full_chip_erase()).unwrap_or(false);
 
+    let serial = match args.serial_address {
+        Some(ref addr) => Some(flash_core::SerialConfig {
+            address: parse_address(addr)?,
+            format: args.serial_format.clone(),
+            start: args.serial_start,
+            step: args.serial_step,
+            encoding: args.serial_encoding.into(),
+            width: args.serial_width,
+            pad: 0xFF,
+            verify: !args.no_serial_verify,
+        }),
+        None => None,
+    };
+
     Ok(ResolvedFlash {
         file_path,
+        serial,
         target,
         probe,
         interface,

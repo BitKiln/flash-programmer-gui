@@ -21,6 +21,7 @@ pub fn handle_flash(
     let resolved = resolve_flash_params(cli, args)?;
     let ResolvedFlash {
         file_path,
+        serial,
         target,
         probe,
         interface,
@@ -62,7 +63,30 @@ pub fn handle_flash(
 
     let return_val = match result {
         Ok(res) => {
+            // A serial is stamped only once the image itself is on the board,
+            // so a failed flash never leaves a numbered but unprogrammed unit.
+            let serial_result = match serial {
+                Some(ref config) => {
+                    flash_core::program_serial(session.as_mut(), config, config.start)
+                        .map(Some)
+                        .map_err(CliError::from)
+                }
+                None => Ok(None),
+            };
             persist_mock_session(session.as_mut(), cli.mock, conn_config.probe_id.as_deref());
+
+            match serial_result {
+                Ok(Some(ref stamped)) => callback.emit_serial(stamped),
+                Ok(None) => {}
+                Err(err) => {
+                    callback.emit_error(err.exit_code(), err.message());
+                    if let Ok(buf) = output_buf.lock() {
+                        let _ = stdout.write_all(&buf);
+                        let _ = stdout.flush();
+                    }
+                    return Err(err);
+                }
+            }
             callback.emit_complete(
                 Some(res.bytes_flashed),
                 res.verify_report.as_ref().map(|r| r.bytes_verified),

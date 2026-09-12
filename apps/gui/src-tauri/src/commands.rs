@@ -6,6 +6,7 @@ use flash_core::batch::{
     run_batch_with, BatchConfig, BatchEvent, BatchObserver, RearmPolicy, StopReason, UnitRecord,
     UnitStatus,
 };
+use flash_core::serial::{program_serial, SerialAllocator, SerialConfig, SerialEncoding};
 use flash_core::{
     ConnectionConfig, FlashEvent, FlashManager, FlashStage, LogLevel, ProgramOptions, WireProtocol,
 };
@@ -115,6 +116,8 @@ pub struct FlashResultDto {
 pub struct BatchUnitDto {
     pub index: u32,
     pub status: String,
+    /// Serial stamped into this board, when serial programming is on.
+    pub serial: Option<String>,
     pub target: Option<String>,
     pub bytes_flashed: u32,
     pub verified: bool,
@@ -664,6 +667,7 @@ fn unit_dto(record: &UnitRecord) -> BatchUnitDto {
     BatchUnitDto {
         index: record.index,
         status: record.status.as_str().to_string(),
+        serial: record.serial.clone(),
         target: record.target.clone(),
         bytes_flashed: record.bytes_flashed,
         verified: record.verified,
@@ -763,6 +767,12 @@ pub async fn start_batch(
     delay_ms: u64,
     log_path: Option<String>,
     log_json: bool,
+    serial_address: Option<u32>,
+    serial_format: Option<String>,
+    serial_start: Option<u64>,
+    serial_step: Option<u64>,
+    serial_encoding: Option<String>,
+    serial_width: Option<usize>,
 ) -> Result<BatchReportDto, String> {
     let state = (*state).clone();
     in_background(move || {
@@ -807,12 +817,40 @@ pub async fn start_batch(
             state: state.clone(),
         };
 
+        // Serial programming is opt-in: without an address, boards are
+        // programmed exactly as before.
+        let allocator = serial_address.map(|address| {
+            SerialAllocator::new(SerialConfig {
+                address,
+                format: serial_format.unwrap_or_else(|| "{n}".to_string()),
+                start: serial_start.unwrap_or(1),
+                step: serial_step.unwrap_or(1),
+                encoding: match serial_encoding.as_deref() {
+                    Some("u32le") => SerialEncoding::U32Le,
+                    Some("u32be") => SerialEncoding::U32Be,
+                    Some("u64le") => SerialEncoding::U64Le,
+                    _ => SerialEncoding::Ascii,
+                },
+                width: serial_width.unwrap_or(16),
+                pad: 0xFF,
+                verify: true,
+            })
+        });
+
         let report = {
             let backend = state.backend.lock().map_err(|e| e.to_string())?;
             let mut opener = |cfg: &ConnectionConfig| backend.open_session(cfg);
+            let mut after_unit = |session: &mut dyn flash_core::traits::FlashSession, _i: u32| {
+                match allocator {
+                    Some(ref allocator) => {
+                        program_serial(session, allocator.config(), allocator.take()).map(Some)
+                    }
+                    None => Ok(None),
+                }
+            };
             run_batch_with(
                 &mut opener,
-                None,
+                Some(&mut after_unit),
                 &image,
                 &config,
                 Some(&observer),

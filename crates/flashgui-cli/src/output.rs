@@ -33,6 +33,8 @@ pub enum NdJsonMessage<'a> {
         duration_ms: u64,
         message: &'a str,
     },
+    #[serde(rename = "serial")]
+    Serial { serial: &'a str },
     #[serde(rename = "error")]
     Error {
         code: i32,
@@ -69,6 +71,18 @@ impl CliProgressCallback {
     fn write_line(&self, line: &str) {
         if let Ok(mut w) = self.output_buf.lock() {
             let _ = writeln!(w, "{}", line);
+        }
+    }
+
+    /// Reports the serial number stamped into the board just programmed.
+    pub fn emit_serial(&self, serial: &str) {
+        if self.json {
+            let msg = NdJsonMessage::Serial { serial };
+            if let Ok(json_str) = serde_json::to_string(&msg) {
+                self.write_line(&json_str);
+            }
+        } else if !self.quiet {
+            self.write_line(&format!("Serial number programmed: {}", serial));
         }
     }
 

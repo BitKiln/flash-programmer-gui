@@ -543,6 +543,12 @@ export function useFlashProgrammer() {
           delayMs: options.delayMs,
           logPath: options.logPath,
           logJson: options.logJson,
+          serialAddress: options.serialAddress,
+          serialFormat: options.serialFormat,
+          serialStart: options.serialStart,
+          serialStep: options.serialStep,
+          serialEncoding: options.serialEncoding,
+          serialWidth: options.serialWidth,
         });
 
         dispatch({ type: "SET_CONNECTION_STATUS", status: "disconnected" });

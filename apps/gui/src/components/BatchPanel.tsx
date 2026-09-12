@@ -22,6 +22,13 @@ export function BatchPanel() {
   const [delayMs, setDelayMs] = useState<string>("0");
   const [logPath, setLogPath] = useState("");
   const [logJson, setLogJson] = useState(false);
+  const [serialAddress, setSerialAddress] = useState("");
+  const [serialFormat, setSerialFormat] = useState("SN-{n:06}");
+  const [serialStart, setSerialStart] = useState("1");
+  const [serialStep, setSerialStep] = useState("1");
+  const [serialEncoding, setSerialEncoding] =
+    useState<"ascii" | "u32le" | "u32be" | "u64le">("ascii");
+  const [serialWidth, setSerialWidth] = useState("16");
   const [target, setTarget] = useState("");
   const [protocol, setProtocol] = useState("Swd");
   const [speed, setSpeed] = useState(4000);
@@ -88,11 +95,26 @@ export function BatchPanel() {
     tableEnd.current?.scrollIntoView({ block: "nearest" });
   }, [units.length]);
 
+  const trimmedSerialAddress = serialAddress.trim();
+  // Addresses are written the way the datasheet writes them: hex, with or
+  // without the 0x.
+  const parsedSerialAddress =
+    trimmedSerialAddress === ""
+      ? null
+      : Number.parseInt(trimmedSerialAddress.replace(/^0[xX]/, ""), 16);
+  const serialAddressInvalid =
+    trimmedSerialAddress !== "" &&
+    (parsedSerialAddress === null || Number.isNaN(parsedSerialAddress));
+
   const parsedCount = count.trim() === "" ? null : Number.parseInt(count, 10);
   const countInvalid =
     parsedCount !== null && (Number.isNaN(parsedCount) || parsedCount < 1);
   const canStart =
-    !running && state.firmwarePath !== null && target.trim() !== "" && !countInvalid;
+    !running &&
+    state.firmwarePath !== null &&
+    target.trim() !== "" &&
+    !countInvalid &&
+    !serialAddressInvalid;
 
   const onStart = async () => {
     if (!state.firmwarePath) {
@@ -118,6 +140,12 @@ export function BatchPanel() {
         delayMs: Number.parseInt(delayMs, 10) || 0,
         logPath: logPath.trim() === "" ? null : logPath.trim(),
         logJson,
+        serialAddress: parsedSerialAddress,
+        serialFormat,
+        serialStart: Number.parseInt(serialStart, 10) || 0,
+        serialStep: Number.parseInt(serialStep, 10) || 1,
+        serialEncoding,
+        serialWidth: Number.parseInt(serialWidth, 10) || 16,
       });
     } finally {
       setRunning(false);
@@ -253,6 +281,86 @@ export function BatchPanel() {
         </label>
       </div>
 
+      <fieldset className="border border-gray-700 rounded p-3 space-y-3">
+        <legend className="px-1 text-xs text-gray-400 uppercase tracking-wider">
+          Serial number (optional)
+        </legend>
+        <div className="grid grid-cols-2 gap-3 text-xs">
+          <label className="flex flex-col gap-1">
+            <span className="text-gray-400">Flash address (hex)</span>
+            <input
+              aria-label="Serial address"
+              value={serialAddress}
+              onChange={(event) => setSerialAddress(event.target.value)}
+              placeholder="0801F800"
+              className="bg-bg-primary border border-gray-700 rounded px-2 py-1 font-mono"
+            />
+            {serialAddressInvalid && (
+              <span className="text-red-400">Enter a hex address, e.g. 0801F800.</span>
+            )}
+          </label>
+
+          <label className="flex flex-col gap-1">
+            <span className="text-gray-400">Template</span>
+            <input
+              aria-label="Serial template"
+              value={serialFormat}
+              onChange={(event) => setSerialFormat(event.target.value)}
+              className="bg-bg-primary border border-gray-700 rounded px-2 py-1 font-mono"
+            />
+          </label>
+
+          <label className="flex flex-col gap-1">
+            <span className="text-gray-400">First value</span>
+            <input
+              aria-label="Serial start"
+              value={serialStart}
+              onChange={(event) => setSerialStart(event.target.value)}
+              className="bg-bg-primary border border-gray-700 rounded px-2 py-1 font-mono"
+            />
+          </label>
+
+          <label className="flex flex-col gap-1">
+            <span className="text-gray-400">Step</span>
+            <input
+              aria-label="Serial step"
+              value={serialStep}
+              onChange={(event) => setSerialStep(event.target.value)}
+              className="bg-bg-primary border border-gray-700 rounded px-2 py-1 font-mono"
+            />
+          </label>
+
+          <label className="flex flex-col gap-1">
+            <span className="text-gray-400">Encoding</span>
+            <select
+              aria-label="Serial encoding"
+              value={serialEncoding}
+              onChange={(event) =>
+                setSerialEncoding(
+                  event.target.value as "ascii" | "u32le" | "u32be" | "u64le"
+                )
+              }
+              className="bg-bg-primary border border-gray-700 rounded px-2 py-1"
+            >
+              <option value="ascii">ASCII text</option>
+              <option value="u32le">u32 little-endian</option>
+              <option value="u32be">u32 big-endian</option>
+              <option value="u64le">u64 little-endian</option>
+            </select>
+          </label>
+
+          <label className="flex flex-col gap-1">
+            <span className="text-gray-400">Field width (ASCII)</span>
+            <input
+              aria-label="Serial width"
+              value={serialWidth}
+              onChange={(event) => setSerialWidth(event.target.value)}
+              className="bg-bg-primary border border-gray-700 rounded px-2 py-1 font-mono"
+            />
+          </label>
+        </div>
+      </fieldset>
+
       <div className="flex items-center gap-2">
         <button
           onClick={onStart}
@@ -280,6 +388,7 @@ export function BatchPanel() {
             <tr>
               <th className="text-left px-2 py-1">#</th>
               <th className="text-left px-2 py-1">Result</th>
+              <th className="text-left px-2 py-1">Serial</th>
               <th className="text-right px-2 py-1">Bytes</th>
               <th className="text-right px-2 py-1">Time</th>
               <th className="text-left px-2 py-1">Detail</th>
@@ -288,7 +397,7 @@ export function BatchPanel() {
           <tbody>
             {units.length === 0 ? (
               <tr>
-                <td colSpan={5} className="px-2 py-3 text-center text-gray-500">
+                <td colSpan={6} className="px-2 py-3 text-center text-gray-500">
                   No boards programmed yet.
                 </td>
               </tr>
@@ -303,6 +412,7 @@ export function BatchPanel() {
                   >
                     {unit.status === "passed" ? "PASS" : "FAIL"}
                   </td>
+                  <td className="px-2 py-1 text-gray-300">{unit.serial ?? "—"}</td>
                   <td className="px-2 py-1 text-right">{unit.bytes_flashed}</td>
                   <td className="px-2 py-1 text-right">{unit.duration_ms} ms</td>
                   <td className="px-2 py-1 text-gray-400 truncate max-w-xs">

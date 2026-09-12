@@ -27,6 +27,8 @@ enum BatchNdJson<'a> {
     UnitFinished {
         index: u32,
         status: &'a str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        serial: Option<&'a str>,
         bytes_flashed: u32,
         verified: bool,
         duration_ms: u64,
@@ -103,6 +105,7 @@ impl BatchObserver for CliBatchObserver {
                     self.write_json(&BatchNdJson::UnitFinished {
                         index: record.index,
                         status: record.status.as_str(),
+                        serial: record.serial.as_deref(),
                         bytes_flashed: record.bytes_flashed,
                         verified: record.verified,
                         duration_ms: record.duration_ms,
@@ -113,9 +116,18 @@ impl BatchObserver for CliBatchObserver {
                         UnitStatus::Passed => "PASS",
                         UnitStatus::Failed => "FAIL",
                     };
+                    let serial = match record.serial {
+                        Some(ref value) => format!(" serial {}", value),
+                        None => String::new(),
+                    };
                     self.write_line(&format!(
-                        "[BATCH] Unit {} {} ({} bytes, {} ms): {}",
-                        record.index, mark, record.bytes_flashed, record.duration_ms, record.message
+                        "[BATCH] Unit {} {}{} ({} bytes, {} ms): {}",
+                        record.index,
+                        mark,
+                        serial,
+                        record.bytes_flashed,
+                        record.duration_ms,
+                        record.message
                     ));
                 }
             }
@@ -189,9 +201,21 @@ pub fn handle_batch(
     let probe_id = config.connection.probe_id.clone();
     let mut opener =
         |cfg: &ConnectionConfig| open_session(backend.as_ref(), cfg, mock);
+    let allocator = resolved
+        .serial
+        .as_ref()
+        .map(|config| flash_core::SerialAllocator::new(config.clone()));
     let mut after_unit = |session: &mut dyn flash_core::traits::FlashSession, _index: u32| {
+        let stamped = match allocator {
+            Some(ref allocator) => Some(flash_core::program_serial(
+                session,
+                allocator.config(),
+                allocator.take(),
+            )?),
+            None => None,
+        };
         persist_mock_session(session, mock, probe_id.as_deref());
-        Ok(())
+        Ok(stamped)
     };
 
     let report = run_batch_with(

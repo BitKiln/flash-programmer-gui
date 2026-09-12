@@ -86,6 +86,14 @@ describe("BatchPanel", () => {
     );
   });
 
+  it("rejects a serial address that is not hex", async () => {
+    await renderWithFirmware();
+    fireEvent.change(screen.getByLabelText("Serial address"), {
+      target: { value: "not-hex" },
+    });
+    expect(screen.getByText("Enter a hex address, e.g. 0801F800.")).toBeTruthy();
+  });
+
   it("rejects a board count below one", async () => {
     await renderWithFirmware();
     fireEvent.change(screen.getByLabelText("Board count"), {
@@ -105,6 +113,7 @@ describe("BatchPanel", () => {
       unit: {
         index: 1,
         status: "passed",
+        serial: "SN-000001",
         target: "STM32U575ZITxQ",
         bytes_flashed: 512,
         verified: true,
@@ -118,6 +127,7 @@ describe("BatchPanel", () => {
       unit: {
         index: 2,
         status: "failed",
+        serial: null,
         target: "STM32U575ZITxQ",
         bytes_flashed: 0,
         verified: false,
@@ -131,6 +141,7 @@ describe("BatchPanel", () => {
       expect(screen.getByText("PASS")).toBeTruthy();
       expect(screen.getByText("FAIL")).toBeTruthy();
     });
+    expect(screen.getByText("SN-000001")).toBeTruthy();
     expect(screen.getByText("1 pass")).toBeTruthy();
     expect(screen.getByText("1 fail")).toBeTruthy();
 

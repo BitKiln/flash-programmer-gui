@@ -224,6 +224,8 @@ export interface MemoryRead {
 export interface BatchUnit {
   index: number;
   status: "passed" | "failed";
+  /** Serial stamped into this board, when serial programming is on. */
+  serial: string | null;
   target: string | null;
   bytes_flashed: number;
   verified: boolean;
@@ -266,4 +268,11 @@ export interface BatchOptions {
   delayMs: number;
   logPath: string | null;
   logJson: boolean;
+  /** Serial programming is off unless an address is given. */
+  serialAddress: number | null;
+  serialFormat: string;
+  serialStart: number;
+  serialStep: number;
+  serialEncoding: "ascii" | "u32le" | "u32be" | "u64le";
+  serialWidth: number;
 }

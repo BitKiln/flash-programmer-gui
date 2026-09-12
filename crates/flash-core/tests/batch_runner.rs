@@ -271,7 +271,7 @@ fn the_per_unit_hook_runs_and_can_fail_a_unit() {
         if index == 2 {
             Err(FlashError::ProgramError("post-program step failed".into()))
         } else {
-            Ok(())
+            Ok(Some(format!("SN-{:04}", index)))
         }
     };
 
@@ -285,6 +285,7 @@ fn the_per_unit_hook_runs_and_can_fail_a_unit() {
     );
 
     assert_eq!(*seen.lock().unwrap(), vec![1, 2]);
+    assert_eq!(report.records[0].serial.as_deref(), Some("SN-0001"));
     assert_eq!(report.passed, 1);
     assert_eq!(report.failed, 1);
     assert_eq!(report.records[1].status, UnitStatus::Failed);
@@ -300,7 +301,17 @@ fn csv_log_has_one_row_per_unit_and_quotes_separators() {
     let csv = report.to_csv();
     let lines: Vec<&str> = csv.lines().collect();
     assert_eq!(lines.len(), 3, "header plus two units, got: {}", csv);
-    assert!(lines[0].starts_with("index,status,probe_serial,target"));
+    assert!(lines[0].starts_with("index,status,serial,probe_serial,target"));
+    // Header and rows must agree on their column count, quoted commas aside.
+    let columns = lines[0].split(',').count();
+    for row in &lines[1..] {
+        assert_eq!(
+            csv_columns(row),
+            columns,
+            "row does not match the header shape: {}",
+            row
+        );
+    }
     assert!(lines[1].starts_with("1,passed,"));
     assert!(lines[2].starts_with("2,passed,"));
     // The success message contains commas, so it must be quoted.
@@ -309,4 +320,18 @@ fn csv_log_has_one_row_per_unit_and_quotes_separators() {
         "unquoted message in: {}",
         lines[1]
     );
+}
+
+/// Counts CSV fields in a row, ignoring separators inside a quoted field.
+fn csv_columns(row: &str) -> usize {
+    let mut fields = 1;
+    let mut in_quotes = false;
+    for c in row.chars() {
+        match c {
+            '"' => in_quotes = !in_quotes,
+            ',' if !in_quotes => fields += 1,
+            _ => {}
+        }
+    }
+    fields
 }
