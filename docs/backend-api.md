@@ -30,6 +30,10 @@ pub trait FlashSession: Send {
     fn program(&mut self, segments: &[MemorySegment], options: &ProgramOptions, cb: Option<&dyn ProgressCallback>) -> Result<(), FlashError>;
     fn verify(&mut self, segments: &[MemorySegment], cb: Option<&dyn ProgressCallback>) -> Result<VerifyReport, FlashError>;
     fn read_memory(&mut self, address: u32, length: u32) -> Result<Vec<u8>, FlashError>;
+
+    fn can_write_memory(&self) -> bool { false }
+    fn write_memory(&mut self, address: u32, data: &[u8]) -> Result<(), FlashError> { /* Unsupported */ }
+
     fn reset(&mut self, halt: bool) -> Result<(), FlashError>;
     fn close(&mut self) -> Result<(), FlashError>;
 }
@@ -64,6 +68,20 @@ probe does.
    `backends`, then regenerate the support matrix:
    `cargo run -p device-db --bin gen-supported-devices`. A test fails if the
    checked-in document has drifted.
+
+## Writing memory is not a way into flash
+
+`write_memory` is a direct bus write: RAM, peripheral registers, and
+memory-mapped configuration such as option bytes. Nothing on that path erases,
+so a write into the flash region either does nothing or leaves a half-written
+sector -- and a probe reports success in both cases. Refuse such an address
+with `InvalidAddress`, naming `program` as the path that erases first;
+`TargetInfo::overlaps_flash` answers the question.
+
+Both defaults refuse. A transport that only speaks to a flash controller -- the
+ESP serial ROM bootloader, for instance -- keeps them, and the front ends hide
+their editors rather than offering a write that would be rejected. The
+conformance suite checks that the two answers agree in both directions.
 
 ## Contracts that are easy to get wrong
 
