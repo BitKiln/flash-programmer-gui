@@ -37,7 +37,7 @@ pub fn handle_flash(
     let firmware = firmware_parser::parse_file(&file_path, base_address)?;
 
     // 3. Open connection to probe & target
-    let backend = get_backend(cli.mock);
+    let backend = get_backend(cli);
     let conn_config = ConnectionConfig {
         probe_id: probe,
         target_name: target,

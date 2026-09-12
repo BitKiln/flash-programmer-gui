@@ -159,7 +159,7 @@ pub fn handle_batch(
 
     let firmware = firmware_parser::parse_file(&resolved.file_path, resolved.base_address)?;
 
-    let backend = get_backend(cli.mock);
+    let backend = get_backend(cli);
     let connection = ConnectionConfig {
         probe_id: resolved.probe.clone(),
         target_name: resolved.target.clone(),

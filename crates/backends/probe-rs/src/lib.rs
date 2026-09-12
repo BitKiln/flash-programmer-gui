@@ -5,6 +5,8 @@
 //! rather than a hardcoded part list.
 
 pub mod backend;
+pub mod descriptions;
 pub mod detect;
 
 pub use backend::{ProbeRsLiveBackend, ProbeRsLiveSession};
+pub use descriptions::TargetDescriptions;

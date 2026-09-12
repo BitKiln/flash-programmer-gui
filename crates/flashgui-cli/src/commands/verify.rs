@@ -30,7 +30,7 @@ pub fn handle_verify(
 
     let firmware = firmware_parser::parse_file(&args.file, base_address)?;
 
-    let backend = get_backend(cli.mock);
+    let backend = get_backend(cli);
     let (probe_id, transport) = crate::commands::resolve_transport(
         args.probe.as_deref(),
         args.port.as_deref(),

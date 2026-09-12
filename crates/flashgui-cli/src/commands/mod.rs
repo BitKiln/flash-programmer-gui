@@ -212,11 +212,13 @@ pub const DEFAULT_SERIAL_BAUD: u32 = 460_800;
 /// hardware attached cannot accidentally reach a probe that happens to be
 /// plugged in. Without it, every compiled-in backend is available and the probe
 /// identifier's scheme decides which one serves the request.
-pub fn get_backend(mock: bool) -> Box<dyn FlashBackend> {
-    if mock {
+pub fn get_backend(cli: &Cli) -> Box<dyn FlashBackend> {
+    if cli.mock {
         Box::new(flash_backends::mock_registry())
     } else {
-        Box::new(flash_backends::default_registry())
+        Box::new(flash_backends::default_registry_with_target_descriptions(
+            cli.target_yaml.clone(),
+        ))
     }
 }
 

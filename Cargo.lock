@@ -1524,6 +1524,7 @@ dependencies = [
  "firmware-parser",
  "flash-core",
  "probe-rs",
+ "tempfile",
  "windows-sys 0.59.0",
 ]
 

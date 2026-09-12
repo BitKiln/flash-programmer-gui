@@ -13,11 +13,24 @@ use flash_core::{BackendRegistry, FlashBackend};
 /// identifiers that carry no scheme, so the real hardware backend goes first
 /// and identifiers written before schemes existed keep working.
 pub fn default_registry() -> BackendRegistry {
+    default_registry_with_target_descriptions(Vec::new())
+}
+
+/// The same registry, plus chip descriptions loaded from these YAML files.
+///
+/// probe-rs is compiled with a fixed target set that contains no Espressif
+/// parts, so the JTAG route to an ESP chip needs a description supplied at
+/// runtime. The paths come from `--target-yaml` on the CLI.
+pub fn default_registry_with_target_descriptions(
+    #[allow(unused_variables)] target_yaml: Vec<std::path::PathBuf>,
+) -> BackendRegistry {
     let mut registry = BackendRegistry::new();
 
     #[cfg(feature = "live-probe")]
     registry.register(Box::new(
-        flash_backend_probe_rs::ProbeRsLiveBackend::new(),
+        flash_backend_probe_rs::ProbeRsLiveBackend::with_target_descriptions(
+            flash_backend_probe_rs::TargetDescriptions::new(target_yaml),
+        ),
     ));
 
     #[cfg(feature = "esp-serial")]

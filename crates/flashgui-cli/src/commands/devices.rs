@@ -9,7 +9,7 @@ pub fn handle_devices(
     stdout: &mut dyn Write,
     _stderr: &mut dyn Write,
 ) -> Result<(), CliError> {
-    let backend = get_backend(cli.mock);
+    let backend = get_backend(cli);
     let probes = backend.list_probes()?;
 
     if cli.json {

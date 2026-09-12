@@ -28,6 +28,14 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub profile_file: Option<String>,
 
+    /// Load a probe-rs target description, for a chip probe-rs was not built
+    /// with. Repeatable.
+    ///
+    /// probe-rs ships no Espressif definitions, so the JTAG route to an ESP
+    /// chip needs one of these; the serial bootloader route (--port) does not.
+    #[arg(long, global = true, value_name = "PATH")]
+    pub target_yaml: Vec<std::path::PathBuf>,
+
     #[command(subcommand)]
     pub command: Commands,
 }

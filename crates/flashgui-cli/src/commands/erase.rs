@@ -21,7 +21,7 @@ pub fn handle_erase(
         )));
     }
 
-    let backend = get_backend(cli.mock);
+    let backend = get_backend(cli);
     let (probe_id, transport) = crate::commands::resolve_transport(
         args.probe.as_deref(),
         args.port.as_deref(),
