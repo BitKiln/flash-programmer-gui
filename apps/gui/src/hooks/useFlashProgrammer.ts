@@ -22,8 +22,7 @@ import type {
  * Provides imperative functions for probe discovery, connection, firmware
  * loading, flashing, erasing, verification, reset, and cancellation. Telemetry
  * arrives as `flash:progress` / `flash:status` / `flash:log` events pushed by
- * the backend; `get_flash_events` remains as a drain for anything buffered
- * before the subscription was established.
+ * the backend.
  */
 export function useFlashProgrammer() {
   const { state, dispatch, addLog } = useAppContext();
@@ -105,19 +104,6 @@ export function useFlashProgrammer() {
       cancelled = true;
       unlisteners.forEach((stop) => stop());
     };
-  }, []);
-
-  /// Drains events buffered before the subscription was established, or by a
-  /// backend that could not emit.
-  const drainBufferedEvents = useCallback(async () => {
-    try {
-      const events = await invoke<FlashEventDto[]>("get_flash_events");
-      for (const event of events) {
-        handleEventRef.current(event);
-      }
-    } catch {
-      // No Tauri backend to drain.
-    }
   }, []);
 
   // ── Probe Discovery ──────────────────────────────────────────────────────
@@ -437,15 +423,12 @@ export function useFlashProgrammer() {
       }, 3000);
     } catch (err) {
       reportFailure(err, "Flash failed");
-    } finally {
-      await drainBufferedEvents();
     }
   }, [
     state.firmwarePath,
     state.flashOptions,
     dispatch,
     addLog,
-    drainBufferedEvents,
     reportFailure,
   ]);
 
@@ -465,10 +448,8 @@ export function useFlashProgrammer() {
       }, 3000);
     } catch (err) {
       reportFailure(err, "Erase failed");
-    } finally {
-      await drainBufferedEvents();
     }
-  }, [dispatch, addLog, drainBufferedEvents, reportFailure]);
+  }, [dispatch, addLog, reportFailure]);
 
   // ── Verify ───────────────────────────────────────────────────────────────
 
@@ -505,14 +486,11 @@ export function useFlashProgrammer() {
       }, 3000);
     } catch (err) {
       reportFailure(err, "Verify failed");
-    } finally {
-      await drainBufferedEvents();
     }
   }, [
     state.firmwarePath,
     dispatch,
     addLog,
-    drainBufferedEvents,
     reportFailure,
   ]);
 
@@ -567,11 +545,9 @@ export function useFlashProgrammer() {
       } catch (err) {
         reportFailure(err, "Batch failed");
         return null;
-      } finally {
-        await drainBufferedEvents();
       }
     },
-    [dispatch, addLog, drainBufferedEvents, reportFailure]
+    [dispatch, addLog, reportFailure]
   );
 
   // ── Reset ────────────────────────────────────────────────────────────────

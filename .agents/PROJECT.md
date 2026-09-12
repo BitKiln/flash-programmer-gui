@@ -152,14 +152,13 @@ Implemented and registered in `apps/gui/src-tauri/src/lib.rs`:
 - `erase_chip()` -> `String`
 - `verify_firmware(path, base_address)` -> `VerifyResultDto`
 - `reset_target(halt)` -> `String`
-- `get_flash_events()` -> `Vec<FlashEventDto>`
 
 Plus `cancel_operation`, `read_memory`, `read_firmware_window`, `save_memory_region`,
 `list_profiles`, `load_profile`, `save_profile` and `delete_profile`.
 
 Progress telemetry is **pushed**: the backend emits `flash:progress`, `flash:status` and `flash:log`
-as an operation proceeds. `get_flash_events` remains as a drain for events buffered before the
-frontend established its subscription.
+as an operation proceeds. The frontend subscribes before it issues the command that produces the
+events, so there is no polling fallback.
 
 ## Code Layout
 ```
