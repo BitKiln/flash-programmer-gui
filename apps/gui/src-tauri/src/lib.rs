@@ -33,7 +33,6 @@ pub fn run() {
             commands::erase_chip,
             commands::verify_firmware,
             commands::reset_target,
-            commands::get_flash_events,
             commands::cancel_operation,
             commands::read_memory,
             commands::read_firmware_window,

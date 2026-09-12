@@ -285,8 +285,7 @@ fn event_channel(event: &FlashEvent) -> &'static str {
 /// Publishes telemetry to the frontend as it happens.
 ///
 /// Emission is best-effort: a failed emit must not abort a flash that is
-/// already writing to a target, and the event is buffered for
-/// `get_flash_events` regardless.
+/// already writing to a target.
 fn emit_event(app: &AppHandle, event: &FlashEvent) {
     let _ = app.emit(event_channel(event), flash_event_to_dto(event));
 }
@@ -664,12 +663,6 @@ pub async fn disconnect_probe(state: State<'_, AppState>) -> Result<String, Stri
     .await
 }
 
-#[tauri::command]
-pub fn get_flash_events(state: State<'_, AppState>) -> Result<Vec<FlashEventDto>, String> {
-    let events = state.drain_events();
-    Ok(events.iter().map(flash_event_to_dto).collect())
-}
-
 /// Turns a failure into a message, distinguishing a user cancellation from a
 /// genuine error: the backends surface cancellation as an ordinary error, so
 /// without this the console would report a cancelled flash as a fault.
@@ -680,7 +673,6 @@ fn describe_failure(app: &AppHandle, state: &AppState, error: flash_core::FlashE
             message: "Operation cancelled".to_string(),
         };
         emit_event(app, &event);
-        state.push_event(event);
         "Operation cancelled".to_string()
     } else {
         error.to_string()
@@ -742,7 +734,6 @@ impl BatchObserver for AppBatchObserver {
                     timestamp_ms: record.started_unix_ms,
                 };
                 emit_event(&self.app, &log);
-                self.state.push_event(log);
                 BatchEventDto::UnitFinished {
                     unit: unit_dto(&record),
                 }
@@ -864,14 +855,13 @@ pub async fn start_batch(
         let report = {
             let backend = state.backend.lock().map_err(|e| e.to_string())?;
             let mut opener = |cfg: &ConnectionConfig| backend.open_session(cfg);
-            let mut after_unit = |session: &mut dyn flash_core::traits::FlashSession, _i: u32| {
-                match allocator {
+            let mut after_unit =
+                |session: &mut dyn flash_core::traits::FlashSession, _i: u32| match allocator {
                     Some(ref allocator) => {
                         program_serial(session, allocator.config(), allocator.take()).map(Some)
                     }
                     None => Ok(None),
-                }
-            };
+                };
             run_batch_with(
                 &mut opener,
                 Some(&mut after_unit),
@@ -923,7 +913,6 @@ pub fn cancel_operation(app: AppHandle, state: State<'_, AppState>) -> Result<St
             .to_string(),
     };
     emit_event(&app, &event);
-    state.push_event(event);
     Ok("Cancellation requested".to_string())
 }
 
