@@ -11,6 +11,7 @@ import type {
   FlashEventDto,
   Profile,
   ProfileSummary,
+  TargetSuggestion,
   MemoryRead,
   BatchOptions,
   BatchReport,
@@ -322,6 +323,20 @@ export function useFlashProgrammer() {
     [addLog]
   );
 
+  // ── Device database ──────────────────────────────────────────────────────
+
+  /// Target suggestions come from the backend's device database rather than a
+  /// list baked into the UI, so a newly supported family needs no frontend
+  /// change. An empty list is fine — the target field is free text.
+  const listTargetSuggestions = useCallback(async (): Promise<TargetSuggestion[]> => {
+    try {
+      return await invoke<TargetSuggestion[]>("list_target_suggestions");
+    } catch {
+      // No Tauri backend (browser preview or tests).
+      return [];
+    }
+  }, []);
+
   // ── Profiles ─────────────────────────────────────────────────────────────
   //
   // Backed by the same TOML store the CLI uses, so a profile saved here works
@@ -584,6 +599,7 @@ export function useFlashProgrammer() {
     readMemory,
     readFirmwareWindow,
     saveMemoryRegion,
+    listTargetSuggestions,
     listProfiles,
     loadProfile,
     saveProfile,

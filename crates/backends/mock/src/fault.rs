@@ -1,4 +1,4 @@
-use crate::error::FlashError;
+use flash_core::error::FlashError;
 
 /// Deterministic hardware and protocol failure modes for test simulation.
 #[derive(Debug, Clone, PartialEq, Eq)]

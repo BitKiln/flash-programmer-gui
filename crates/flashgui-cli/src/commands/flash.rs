@@ -1,7 +1,7 @@
 use std::io::Write;
 
 use flash_core::manager::FlashManager;
-use flash_core::types::{ConnectionConfig, ProgramOptions, ResetType};
+use flash_core::types::{ConnectionConfig, ProgramOptions, ResetType, Transport};
 
 use crate::cli::{Cli, FlashArgs};
 use crate::commands::{
@@ -44,6 +44,7 @@ pub fn handle_flash(
         speed_khz: speed,
         connect_under_reset: false,
         reset_type: Some(ResetType::Software),
+        transport: Transport::DebugProbe,
     };
 
     let mut session = open_session(backend.as_ref(), &conn_config, cli.mock)?;

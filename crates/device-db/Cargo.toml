@@ -1,0 +1,10 @@
+[package]
+name = "device-db"
+version = "0.1.0"
+edition = "2021"
+authors = ["Flash Programmer GUI Team"]
+description = "Vendor device database: target aliases, silicon identification rules, and backend capability matrix"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }

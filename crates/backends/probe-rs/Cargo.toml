@@ -1,0 +1,21 @@
+[package]
+name = "flash-backend-probe-rs"
+version = "0.1.0"
+edition = "2021"
+authors = ["Flash Programmer GUI Team"]
+description = "probe-rs backend: ST-Link, CMSIS-DAP, and J-Link probes over SWD or JTAG"
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "flash_backend_probe_rs"
+path = "src/lib.rs"
+
+[dependencies]
+flash-core = { path = "../../flash-core" }
+firmware-parser = { path = "../../firmware-parser" }
+device-db = { path = "../../device-db" }
+probe-rs = "0.32"
+crc32fast = "1.4"
+
+[target."cfg(windows)".dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem", "Win32_Foundation"] }

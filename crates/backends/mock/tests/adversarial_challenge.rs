@@ -2,20 +2,20 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use firmware_parser::{parse_hex, FirmwareImage, MemorySegment};
-use flash_core::mock::{InjectedFault, MockProbeBackend};
+use flash_backend_mock::{InjectedFault, MockProbeBackend};
 use flash_core::traits::FlashBackend;
 use flash_core::types::{ConnectionConfig, ProgramOptions, WireProtocol};
 use flash_core::{ClosureProgressCallback, FlashError, FlashEvent, FlashManager, FlashStage};
 
 /// Helper to load the test bootloader-app gap hex file.
 fn load_gap_hex() -> FirmwareImage {
-    let hex_content = include_str!("../../../tests/fixtures/valid_stm32_bootloader_app_gap.hex");
+    let hex_content = include_str!("../../../../tests/fixtures/valid_stm32_bootloader_app_gap.hex");
     parse_hex(hex_content).expect("Parsing valid_stm32_bootloader_app_gap.hex must succeed")
 }
 
 /// Helper to load the single-segment test hex file.
 fn load_single_segment_hex() -> FirmwareImage {
-    let hex_content = include_str!("../../../tests/fixtures/valid_stm32_single_segment.hex");
+    let hex_content = include_str!("../../../../tests/fixtures/valid_stm32_single_segment.hex");
     parse_hex(hex_content).expect("Parsing valid_stm32_single_segment.hex must succeed")
 }
 

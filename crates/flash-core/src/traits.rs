@@ -9,6 +9,13 @@ pub trait FlashBackend: Send + Sync {
     /// Identifier of the backend driver (e.g. "mock-probe", "probe-rs").
     fn name(&self) -> &'static str;
 
+    /// Scheme this backend claims on a probe identifier, without the colon.
+    ///
+    /// [`BackendRegistry`](crate::registry::BackendRegistry) routes `mock:…` to
+    /// the backend whose scheme is `mock`. Keep it short, lowercase, and stable:
+    /// it appears in saved profiles and in scripts.
+    fn scheme(&self) -> &'static str;
+
     /// Discover and list all currently accessible probes.
     fn list_probes(&self) -> Result<Vec<ProbeInfo>, FlashError>;
 

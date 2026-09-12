@@ -80,6 +80,9 @@ pub enum FlashError {
     #[error("I/O error: {0}")]
     Io(String),
 
+    #[error("Not supported by this backend: {0}")]
+    Unsupported(String),
+
     #[error("Internal error: {0}")]
     Internal(String),
 }

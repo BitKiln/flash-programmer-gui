@@ -2,7 +2,7 @@ use std::io::Write;
 use std::time::Instant;
 
 use flash_core::error::FlashError;
-use flash_core::types::{ConnectionConfig, ResetType};
+use flash_core::types::{ConnectionConfig, ResetType, Transport};
 
 use crate::cli::{parse_address, Cli, VerifyArgs};
 use crate::commands::{get_backend, is_supported_target, open_session};
@@ -38,6 +38,7 @@ pub fn handle_verify(
         speed_khz: args.speed,
         connect_under_reset: false,
         reset_type: Some(ResetType::Software),
+        transport: Transport::DebugProbe,
     };
 
     let mut session = open_session(backend.as_ref(), &conn_config, cli.mock)?;

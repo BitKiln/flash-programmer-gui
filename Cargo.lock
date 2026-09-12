@@ -931,6 +931,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "device-db"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "difflib"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1288,25 +1295,55 @@ dependencies = [
 ]
 
 [[package]]
+name = "flash-backend-mock"
+version = "0.1.0"
+dependencies = [
+ "crc32fast",
+ "firmware-parser",
+ "flash-core",
+]
+
+[[package]]
+name = "flash-backend-probe-rs"
+version = "0.1.0"
+dependencies = [
+ "crc32fast",
+ "device-db",
+ "firmware-parser",
+ "flash-core",
+ "probe-rs",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "flash-backends"
+version = "0.1.0"
+dependencies = [
+ "flash-backend-mock",
+ "flash-backend-probe-rs",
+ "flash-core",
+]
+
+[[package]]
 name = "flash-core"
 version = "0.1.0"
 dependencies = [
  "crc32fast",
  "directories",
  "firmware-parser",
- "probe-rs",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
  "toml 0.8.2",
- "windows-sys 0.59.0",
 ]
 
 [[package]]
 name = "flash-programmer-gui"
 version = "0.1.0"
 dependencies = [
+ "device-db",
  "firmware-parser",
+ "flash-backends",
  "flash-core",
  "serde",
  "serde_json",
@@ -1323,8 +1360,11 @@ version = "0.1.0"
 dependencies = [
  "assert_cmd",
  "clap",
+ "device-db",
  "directories",
  "firmware-parser",
+ "flash-backend-mock",
+ "flash-backends",
  "flash-core",
  "predicates",
  "serde",

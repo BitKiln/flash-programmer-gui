@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAppContext } from "../state/AppContext";
 import { useFlashProgrammer } from "../hooks/useFlashProgrammer";
-import type { ProfileSummary } from "../types";
+import type { ProfileSummary, TargetSuggestion } from "../types";
 
 const RECENT_TARGETS_KEY = "flashgui.recentTargets";
 const RECENT_LIMIT = 5;
@@ -34,6 +34,7 @@ export function ConnectionPanel() {
     connectProbe,
     disconnectProbe,
     autoDetectTarget,
+    listTargetSuggestions,
     listProfiles,
     loadProfile,
     saveProfile,
@@ -50,6 +51,7 @@ export function ConnectionPanel() {
   const [isDetecting, setIsDetecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
+  const [targetSuggestions, setTargetSuggestions] = useState<TargetSuggestion[]>([]);
   const [selectedProfile, setSelectedProfile] = useState("");
 
   const refreshProfiles = useCallback(async () => {
@@ -59,6 +61,10 @@ export function ConnectionPanel() {
   useEffect(() => {
     void refreshProfiles();
   }, [refreshProfiles]);
+
+  useEffect(() => {
+    void listTargetSuggestions().then(setTargetSuggestions);
+  }, [listTargetSuggestions]);
 
   const handleApplyProfile = async (name: string) => {
     setSelectedProfile(name);
@@ -331,18 +337,11 @@ export function ConnectionPanel() {
         />
         <datalist id="target-presets">
           <option value="auto">auto (identify the connected chip)</option>
-          <option value="STM32U575ZITx">STM32U575ZITx (NUCLEO-U575ZI-Q, 2MB Flash)</option>
-          <option value="STM32U585AIIx">STM32U585AIIx (B-U585I-IOT02A, 2MB Flash)</option>
-          <option value="STM32H563ZITx">STM32H563ZITx (NUCLEO-H563ZI, 2MB Flash)</option>
-          <option value="STM32L476RG">STM32L476RG (NUCLEO-L476RG, 1MB Flash)</option>
-          <option value="STM32G474RE">STM32G474RE (NUCLEO-G474RE, 512KB Flash)</option>
-          <option value="STM32H753ZI">STM32H753ZI (NUCLEO-H753ZI, 2MB Flash)</option>
-          <option value="STM32H743ZI">STM32H743ZI (NUCLEO-H743ZI, 2MB Flash)</option>
-          <option value="STM32F401RE">STM32F401RE (NUCLEO-F401RE, 512KB Flash)</option>
-          <option value="STM32F411RE">STM32F411RE (NUCLEO-F411RE, 512KB Flash)</option>
-          <option value="STM32F407VG">STM32F407VG (STM32F4-Discovery, 1MB Flash)</option>
-          <option value="STM32F103C8">STM32F103C8 (BluePill, 64KB Flash)</option>
-          <option value="RP2040">RP2040 (Raspberry Pi Pico)</option>
+          {targetSuggestions.map((suggestion) => (
+            <option key={suggestion.value} value={suggestion.value}>
+              {suggestion.label}
+            </option>
+          ))}
         </datalist>
         {recentTargets.length > 0 && (
           <div className="flex flex-wrap gap-1 mt-1.5">

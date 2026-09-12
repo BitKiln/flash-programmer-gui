@@ -37,6 +37,7 @@ pub fn run() {
             commands::read_memory,
             commands::read_firmware_window,
             commands::save_memory_region,
+            commands::list_target_suggestions,
             commands::list_profiles,
             commands::load_profile,
             commands::save_profile,

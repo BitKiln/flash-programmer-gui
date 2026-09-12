@@ -12,8 +12,8 @@ use probe_rs::config::{Registry, TargetSelector};
 use probe_rs::probe::DebugProbeInfo;
 use probe_rs::{MemoryInterface, Permissions, Session};
 
-use crate::error::FlashError;
-use crate::types::ConnectionConfig;
+use flash_core::error::FlashError;
+use flash_core::types::ConnectionConfig;
 
 /// Settle time after a failed attach; ST-Link V3 re-enumerates on Windows and a
 /// back-to-back open would otherwise fail (or make the probe vanish from the
@@ -159,7 +159,7 @@ fn open_probe(
     matched: &DebugProbeInfo,
     config: &ConnectionConfig,
 ) -> Result<probe_rs::probe::Probe, FlashError> {
-    super::probe_rs_backend::open_probe_internal(matched, config)
+    crate::backend::open_probe_internal(matched, config)
 }
 
 /// Attaches with the given selector, honouring connect-under-reset.
@@ -271,10 +271,11 @@ fn registry_candidates(prefixes: &[&str], flash_kb: Option<u32>, hints: &[String
 
 /// Identifies the connected target.
 ///
-/// Order: on-chip ID register read through a generic core attach, then a
-/// registry-driven attach over the variants of the identified family. When the
-/// chip cannot be named, the generic core that responded is reported so the
-/// caller can still open a session.
+/// Order: on-chip ID register read through a generic core attach, then -- for
+/// anything that is not an ST part -- probe-rs's own ROM-table identification,
+/// then a registry-driven attach over the variants of the identified family.
+/// When the chip cannot be named, the generic core that responded is reported
+/// so the caller can still open a session.
 pub fn detect(matched: &DebugProbeInfo, config: &ConnectionConfig) -> Detected {
     let mut detected = Detected {
         chip: None,
@@ -302,7 +303,29 @@ pub fn detect(matched: &DebugProbeInfo, config: &ConnectionConfig) -> Detected {
         }
     }
 
-    // 2. Turn the device id into registry name prefixes. Fall back to the
+    // 2. No DBGMCU device id means this is not an ST part. Ask probe-rs to
+    //    identify it: its vendor plugins read the CoreSight ROM table for the
+    //    JEP106 manufacturer and part, which is how a Silicon Labs EFR32, a
+    //    Nordic nRF, or an RP2040 gets named. The ST path stays first because
+    //    ST violates the ROM-table spec and needs the DBGMCU read instead.
+    if detected.dev_id.is_none() {
+        match attach(matched, config, TargetSelector::Auto) {
+            Ok(session) => {
+                let name = session.target().name.clone();
+                drop(session);
+                sleep(SETTLE);
+                // Auto falls back to a bare core type ("cortex-m33") when it
+                // cannot name the silicon; that is not an identification.
+                if !name.to_lowercase().starts_with("cortex-") {
+                    detected.chip = Some(name);
+                    return detected;
+                }
+            }
+            Err(_) => sleep(SETTLE),
+        }
+    }
+
+    // 3. Turn the device id into registry name prefixes. Fall back to the
     //    families implied by the ID register that answered.
     let mut prefixes: Vec<&str> = Vec::new();
     if let Some(dev_id) = detected.dev_id {
@@ -315,7 +338,7 @@ pub fn detect(matched: &DebugProbeInfo, config: &ConnectionConfig) -> Detected {
         return detected;
     }
 
-    // 3. Attach to registry variants until one works. A variant that attaches
+    // 4. Attach to registry variants until one works. A variant that attaches
     //    is one whose flash algorithm and memory map the chip accepts.
     let hints = board_hints();
     let candidates = registry_candidates(&prefixes, detected.flash_kb, &hints);

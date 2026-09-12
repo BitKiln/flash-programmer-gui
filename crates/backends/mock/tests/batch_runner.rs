@@ -9,7 +9,7 @@ use flash_core::batch::{
     run_batch_with, BatchConfig, BatchEvent, BatchObserver, RearmPolicy, StopReason, UnitStatus,
 };
 use flash_core::error::FlashError;
-use flash_core::mock::MockProbeBackend;
+use flash_backend_mock::MockProbeBackend;
 use flash_core::traits::{FlashBackend, FlashSession};
 use flash_core::types::{ConnectionConfig, ProgramOptions};
 
