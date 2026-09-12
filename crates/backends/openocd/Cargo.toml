@@ -1,0 +1,19 @@
+[package]
+name = "flash-backend-openocd"
+version = "0.1.0"
+edition = "2021"
+authors = ["Flash Programmer GUI Team"]
+description = "OpenOCD backend over its TCL RPC port, for targets and adapters probe-rs does not cover"
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "flash_backend_openocd"
+path = "src/lib.rs"
+
+[dependencies]
+flash-core = { path = "../../flash-core" }
+firmware-parser = { path = "../../firmware-parser" }
+crc32fast = "1.4"
+
+[dev-dependencies]
+tempfile = "3"

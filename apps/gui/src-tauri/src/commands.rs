@@ -148,11 +148,19 @@ pub struct BatchReportDto {
 #[serde(tag = "type")]
 pub enum BatchEventDto {
     /// Waiting for the programmed board to be disconnected.
-    WaitingForDetach { index: u32 },
+    WaitingForDetach {
+        index: u32,
+    },
     /// Waiting for the next board to be connected.
-    WaitingForAttach { index: u32 },
-    UnitStarted { index: u32 },
-    UnitFinished { unit: BatchUnitDto },
+    WaitingForAttach {
+        index: u32,
+    },
+    UnitStarted {
+        index: u32,
+    },
+    UnitFinished {
+        unit: BatchUnitDto,
+    },
     Finished {
         passed: u32,
         failed: u32,
@@ -432,6 +440,11 @@ fn transport_for(probe_id: Option<&str>, baud: Option<u32>) -> Transport {
         Some(id) if id.starts_with("esp:") => Transport::Serial {
             baud: baud.unwrap_or(DEFAULT_SERIAL_BAUD),
             controls_reset: true,
+        },
+        // The endpoint travels in the transport as well as in the identifier,
+        // because it is the transport the backend reads first.
+        Some(id) if id.starts_with("openocd:") => Transport::Rpc {
+            endpoint: id.trim_start_matches("openocd:").to_string(),
         },
         _ => Transport::DebugProbe,
     }
@@ -1276,9 +1289,7 @@ fn record_history(record: Option<flash_core::HistoryRecord>) {
 
 /// The programming history, newest first.
 #[tauri::command]
-pub fn programming_history(
-    limit: Option<usize>,
-) -> Result<Vec<flash_core::HistoryRecord>, String> {
+pub fn programming_history(limit: Option<usize>) -> Result<Vec<flash_core::HistoryRecord>, String> {
     flash_core::history::read_records(None, limit.or(Some(100))).map_err(|e| e.to_string())
 }
 
@@ -1397,10 +1408,12 @@ pub async fn write_memory(
             .ok_or_else(|| "No active session. Connect to a probe first.".to_string())?;
 
         if !session.can_write_memory() {
-            return Err("This connection cannot write target memory directly: it reaches \
+            return Err(
+                "This connection cannot write target memory directly: it reaches \
                         the flash controller only. A debug probe is needed for RAM, \
                         registers and option bytes."
-                .to_string());
+                    .to_string(),
+            );
         }
 
         session

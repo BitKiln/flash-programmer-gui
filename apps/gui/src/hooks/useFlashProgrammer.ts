@@ -151,8 +151,16 @@ export function useFlashProgrammer() {
       const serialPorts = hardwareProbes.filter((p) =>
         p.identifier.startsWith("esp:")
       );
+      // An OpenOCD endpoint is a socket, not a probe. Counting it as one made
+      // the log claim a debugger that is not attached, and put it in the same
+      // group a UI auto-selects from.
+      const openOcdEndpoints = hardwareProbes.filter((p) =>
+        p.identifier.startsWith("openocd:")
+      );
       const debugProbes = hardwareProbes.filter(
-        (p) => !p.identifier.startsWith("esp:")
+        (p) =>
+          !p.identifier.startsWith("esp:") &&
+          !p.identifier.startsWith("openocd:")
       );
       const found = [
         debugProbes.length > 0
@@ -160,6 +168,9 @@ export function useFlashProgrammer() {
           : null,
         serialPorts.length > 0
           ? `${serialPorts.length} serial port(s): ${serialPorts.map((p) => p.product_name).join(", ")}`
+          : null,
+        openOcdEndpoints.length > 0
+          ? `${openOcdEndpoints.length} OpenOCD endpoint(s): ${openOcdEndpoints.map((p) => p.identifier.replace("openocd:", "")).join(", ")}`
           : null,
       ].filter(Boolean);
       if (found.length > 0) {

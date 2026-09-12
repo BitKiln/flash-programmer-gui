@@ -83,6 +83,24 @@ ESP serial ROM bootloader, for instance -- keeps them, and the front ends hide
 their editors rather than offering a write that would be rejected. The
 conformance suite checks that the two answers agree in both directions.
 
+## When the backend drives a program rather than a library
+
+The OpenOCD backend is the awkward case worth reading before writing a fourth
+transport, because two of its properties are not obvious from the traits:
+
+- **A reply is not a result.** OpenOCD reports failure as prose on the same
+  channel as success, so `Ok` from the transport says only that the socket
+  worked. Inspect the reply; err towards reporting a failure, because a write
+  that silently did nothing is worse than a spurious error quoting the text
+  that caused it.
+- **Some commands are executed by the other process.** `flash write_image`
+  opens the path itself, so a file written locally is meaningless to an OpenOCD
+  on another machine. Refuse those operations against a remote endpoint,
+  naming why, and keep the ones that work over the socket alone.
+
+Both of these are visible in the trait only as an error type, which is why they
+are stated here.
+
 ## Contracts that are easy to get wrong
 
 **Erase leaves `0xFF`, and a write can only clear bits.** If your transport

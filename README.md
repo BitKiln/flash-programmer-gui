@@ -258,6 +258,40 @@ FLASHGUI_HW_TARGET=STM32U575ZITxQ cargo test -p e2e-tests --test hardware -- --i
 
 Set `FLASHGUI_HW_PROBE` as well when more than one probe is attached.
 
+## OpenOCD
+
+A running OpenOCD is a third transport, reached over its TCL port:
+
+```bash
+flashgui-cli devices
+flashgui-cli flash build/app.hex --openocd localhost:6666
+flashgui-cli erase --openocd 6666 --address 0x08000000 --length 0x4000
+```
+
+`--openocd <endpoint>` is shorthand for `--probe openocd:<endpoint>`; a bare
+number is a port on localhost. `devices` lists the default endpoint only when
+something is listening on it, so an OpenOCD that is not running does not appear
+as though it were a probe -- naming the endpoint reaches it either way. The desktop application has an **OpenOCD** mode
+where the endpoint is typed rather than chosen from a list, because nothing can
+enumerate OpenOCD processes.
+
+This reaches adapters and targets probe-rs does not: FTDI JTAG cables, RISC-V
+parts, ESP32 over JTAG, anything with a board file and nothing else. OpenOCD's
+own configuration chooses the adapter, the wire and the clock, so this program
+offers no protocol or speed control for it -- `--baud` is refused rather than
+ignored, and the desktop panel hides the SWD/JTAG radios.
+
+**Programming needs OpenOCD on the same machine.** `flash write_image` makes
+OpenOCD open the image file itself, so a path from here means nothing to a
+process elsewhere; that operation is refused against a remote endpoint rather
+than attempted. Reading, erasing, verifying and a small memory write work over
+the network.
+
+**Nothing is claimed to be verified against a real OpenOCD yet.** The session
+logic runs in CI against an in-memory OpenOCD, and the TCL framing runs against
+a stub TCP server, but no released OpenOCD has answered these commands here.
+See **Status**.
+
 ## Memory, flash map, and history
 
 **Reading and writing memory.** `memory read` prints a hex dump; `memory write`
@@ -324,7 +358,7 @@ history read on a production line must not contain runs that never happened.
 | ESP32 over the serial ROM bootloader — `esp:` backend, CLI and desktop | Verified on an ESP-WROOM-32 |
 | Runtime chip descriptions (`--target-yaml`) for parts probe-rs lacks | Done |
 | Option and configuration bytes, with irreversible-field interlocks | Planned |
-| OpenOCD backend | Planned (v0.5) |
+| OpenOCD backend — `openocd:` scheme, `--openocd`, desktop mode | Untested against a real OpenOCD |
 
 ## Licence
 

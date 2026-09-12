@@ -35,6 +35,7 @@ pub fn handle_verify(
         args.probe.as_deref(),
         args.port.as_deref(),
         args.baud,
+        args.openocd.as_deref(),
     )?;
     let conn_config = ConnectionConfig {
         probe_id,
