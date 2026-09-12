@@ -85,12 +85,12 @@ The project is organized as a Cargo workspace with decoupled Rust crates and a m
 | M2 | Flash Core & Probe Abstraction | Implement `flash-core` (traits, live probe-rs, virtual mock probe, fault injection, tests) | M1 (models) | DONE |
 | M3 | CLI Companion & Profiles | Implement `flashgui-cli` (commands, flags, profiles, headless mock CI tests) | M1, M2 | DONE |
 | M4 | Desktop Application GUI | Implement `src-tauri` IPC & React/TS frontend (panels, controls, console, Vitest) | M1, M2 | DONE |
-| M5 | Final E2E Integration & Hardening | Phase 1: Pass 100% E2E test suite (Tiers 1-4); Phase 2: Tier 5 adversarial hardening | M1, M2, M3, M4, E2E | PLANNED |
+| M5 | Final E2E Integration & Hardening | Phase 1: Pass 100% E2E test suite (Tiers 1-4) - DONE; Phase 2: Tier 5 adversarial hardening (F42) - outstanding | M1, M2, M3, M4, E2E | IN PROGRESS |
 
 ## Parallel Dual-Track: E2E Testing Track
 | # | Name | Scope | Dependencies | Status |
 |---|------|-------|-------------|--------|
-| E2E | Opaque-Box E2E Test Suite | Harness and Tier 1-4 suites in `crates/e2e-tests`, spawning the `flashgui-cli` binary; Tier 5 runs against real hardware behind `FLASHGUI_HW_TARGET` | none (black-box) | IN PROGRESS |
+| E2E | Opaque-Box E2E Test Suite | Harness and Tier 1-4 suites in `crates/e2e-tests`, spawning the `flashgui-cli` binary; Tier 5 runs against real hardware behind `FLASHGUI_HW_TARGET` | none (black-box) | DONE |
 
 ## Interface Contracts
 
