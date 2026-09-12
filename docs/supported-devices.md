@@ -32,6 +32,14 @@ this table names. A part missing from this list is usually still programmable
 | Silicon Labs | EFR32 Blue Gecko | `EFR32BG22C224F512IM40` | `probe:` |
 | Silicon Labs | EFR32 Flex Gecko | `EFR32FG23B010F512IM48` | `probe:` |
 | Silicon Labs | EFR32 Mighty Gecko | `EFR32MG24B210F1536IM48` | `probe:` |
+| Espressif | ESP32-C2 / ESP8684 | `esp32c2` | `esp:`, `probe:` |
+| Espressif | ESP32-C3 / ESP8685 | `esp32c3` | `esp:`, `probe:` |
+| Espressif | ESP32-C6 | `esp32c6` | `esp:`, `probe:` |
+| Espressif | ESP32-H2 | `esp32h2` | `esp:`, `probe:` |
+| Espressif | ESP32-P4 | `esp32p4` | `esp:`, `probe:` |
+| Espressif | ESP32-S2 | `esp32s2` | `esp:`, `probe:` |
+| Espressif | ESP32-S3 | `esp32s3` | `esp:`, `probe:` |
+| Espressif | ESP32 | `esp32` | `esp:`, `probe:` |
 | Raspberry Pi | RP2040 | `RP2040` | `probe:` |
 
 ## Backends
@@ -39,4 +47,5 @@ this table names. A part missing from this list is usually still programmable
 | Scheme | Backend | Reaches |
 |---|---|---|
 | `probe:` | probe-rs | ST-Link, CMSIS-DAP/DAPLink, and J-Link probes over SWD or JTAG |
+| `esp:` | esp-serial | Espressif parts over the serial/USB ROM bootloader — no probe needed |
 | `mock:` | simulated | Nothing physical — a NOR flash model for tests and demos |

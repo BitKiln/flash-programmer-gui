@@ -20,6 +20,9 @@ pub fn default_registry() -> BackendRegistry {
         flash_backend_probe_rs::ProbeRsLiveBackend::new(),
     ));
 
+    #[cfg(feature = "esp-serial")]
+    registry.register(Box::new(flash_backend_esp_serial::EspSerialBackend::new()));
+
     #[cfg(feature = "mock-probe")]
     registry.register(Box::new(flash_backend_mock::MockProbeBackend::new()));
 
@@ -103,6 +106,14 @@ mod tests {
             names[0], "probe-rs",
             "a bare probe identifier must still reach real hardware"
         );
+    }
+
+    #[cfg(feature = "esp-serial")]
+    #[test]
+    fn an_esp_identifier_routes_to_the_serial_backend() {
+        let registry = default_registry();
+        let backend = registry.route(Some("esp:COM7")).unwrap();
+        assert_eq!(backend.name(), "esp-serial");
     }
 
     #[cfg(feature = "mock-probe")]

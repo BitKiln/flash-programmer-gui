@@ -94,6 +94,18 @@ pub const FAMILIES: &[Family] = &[
     fam("EFR32BG", Vendor::SiliconLabs, "EFR32 Blue Gecko", "EFR32BG22C224F512IM40"),
     fam("EFR32FG", Vendor::SiliconLabs, "EFR32 Flex Gecko", "EFR32FG23B010F512IM48"),
     fam("EFR32MG", Vendor::SiliconLabs, "EFR32 Mighty Gecko", "EFR32MG24B210F1536IM48"),
+    // --- Espressif: the serial ROM bootloader reaches every part with just a
+    // USB cable; the probe-rs path additionally needs JTAG and a bundled target
+    // description, since probe-rs ships no ESP definitions of its own.
+    esp("ESP32-C2", "ESP32-C2 / ESP8684", "esp32c2"),
+    esp("ESP32-C3", "ESP32-C3 / ESP8685", "esp32c3"),
+    esp("ESP32-C6", "ESP32-C6", "esp32c6"),
+    esp("ESP32-H2", "ESP32-H2", "esp32h2"),
+    esp("ESP32-P4", "ESP32-P4", "esp32p4"),
+    esp("ESP32-S2", "ESP32-S2", "esp32s2"),
+    esp("ESP32-S3", "ESP32-S3", "esp32s3"),
+    // Listed last so the bare "ESP32" prefix loses to every specific one above.
+    esp("ESP32", "ESP32", "esp32"),
     // --- Raspberry Pi ---
     fam("RP2040", Vendor::RaspberryPi, "RP2040", "RP2040"),
 ];
@@ -114,14 +126,29 @@ const fn fam(
     }
 }
 
+/// An Espressif part: reachable over the serial bootloader with no probe at
+/// all, and over JTAG through probe-rs when a bundled target description is
+/// loaded. Serial comes first because it is what almost everyone uses.
+const fn esp(prefix: &'static str, display: &'static str, example: &'static str) -> Family {
+    Family {
+        prefix,
+        vendor: Vendor::Espressif,
+        display,
+        backends: &[scheme::ESP_SERIAL, scheme::PROBE_RS],
+        example,
+    }
+}
+
 /// The family a target name belongs to, if the database knows it.
 ///
 /// Longest prefix wins, so `STM32H7` is preferred over a hypothetical `STM32`.
 pub fn family_of(target: &str) -> Option<&'static Family> {
-    let upper = target.trim().to_uppercase();
+    // "esp32c6", "ESP32-C6" and "ESP32C6" are the same part written three
+    // ways; the bootloader reports the first and datasheets print the second.
+    let normalized = target.trim().to_uppercase().replace(['-', '_'], "");
     FAMILIES
         .iter()
-        .filter(|f| upper.starts_with(f.prefix))
+        .filter(|f| normalized.starts_with(&f.prefix.replace(['-', '_'], "")))
         .max_by_key(|f| f.prefix.len())
 }
 
@@ -184,6 +211,15 @@ pub fn resolve_target_alias(input: &str) -> Option<&'static str> {
         "nucleowb55rg" | "stm32wb55rg" | "stm32wb55" | "wb55" => Some("STM32WB55RGVx"),
         "nucleowl55jc" | "stm32wl55jc" | "stm32wl55" | "wl55" => Some("STM32WL55JCIx"),
         "stm32c031c6" | "stm32c031" | "c031" => Some("STM32C031C6Tx"),
+        // Espressif devkits, by the name printed on the board.
+        "esp32" | "esp32devkitc" | "esp32wroom" | "esp32wroom32" => Some("esp32"),
+        "esp32s3" | "esp32s3devkitc" | "esp32s3devkitm" | "s3" => Some("esp32s3"),
+        "esp32s2" | "esp32s2saola" | "s2" => Some("esp32s2"),
+        "esp32c3" | "esp32c3devkitm" | "esp32c3devkitc" | "c3" => Some("esp32c3"),
+        "esp32c6" | "esp32c6devkitc" | "esp32c6devkitm" | "c6" => Some("esp32c6"),
+        "esp32h2" | "esp32h2devkitm" | "h2" => Some("esp32h2"),
+        "esp32c2" | "esp8684" => Some("esp32c2"),
+        "esp32p4" | "esp32p4function-ev" | "p4" => Some("esp32p4"),
         "rp2040" | "pico" | "picow" | "raspberrypipico" => Some("RP2040"),
         _ => None,
     }
@@ -241,6 +277,10 @@ pub fn render_supported_devices() -> String {
         "| `probe:` | probe-rs | ST-Link, CMSIS-DAP/DAPLink, and J-Link probes over SWD or JTAG |
 ",
     );
+    out.push_str(
+        "| `esp:` | esp-serial | Espressif parts over the serial/USB ROM bootloader — no probe needed |
+",
+    );
     out.push_str("| `mock:` | simulated | Nothing physical — a NOR flash model for tests and demos |
 ");
     out
@@ -293,6 +333,36 @@ mod tests {
             render_supported_devices(),
             "docs/supported-devices.md is stale; run `cargo run -p device-db --bin gen-supported-devices`"
         );
+    }
+
+    #[test]
+    fn esp_parts_are_matched_however_they_are_written() {
+        // The bootloader reports "esp32c6"; the datasheet prints "ESP32-C6".
+        assert_eq!(family_of("esp32c6").unwrap().prefix, "ESP32-C6");
+        assert_eq!(family_of("ESP32-C6").unwrap().prefix, "ESP32-C6");
+        assert_eq!(family_of("ESP32C6").unwrap().prefix, "ESP32-C6");
+    }
+
+    #[test]
+    fn a_specific_esp_part_beats_the_bare_esp32_prefix() {
+        // "ESP32" is a prefix of "ESP32S3"; longest match must win or every
+        // S3 would be treated as an original ESP32.
+        assert_eq!(family_of("esp32s3").unwrap().prefix, "ESP32-S3");
+        assert_eq!(family_of("esp32").unwrap().prefix, "ESP32");
+    }
+
+    #[test]
+    fn esp_parts_are_reachable_over_both_transports() {
+        assert!(backend_supports(scheme::ESP_SERIAL, "esp32s3"));
+        assert!(backend_supports(scheme::PROBE_RS, "esp32s3"));
+        // ...but an STM32 is not reachable over the ESP bootloader.
+        assert!(!backend_supports(scheme::ESP_SERIAL, "STM32U575ZITx"));
+    }
+
+    #[test]
+    fn devkit_names_resolve_to_the_chip() {
+        assert_eq!(resolve_target_alias("ESP32-S3-DevKitC"), Some("esp32s3"));
+        assert_eq!(resolve_target_alias("esp8684"), Some("esp32c2"));
     }
 
     #[test]

@@ -1,0 +1,28 @@
+[package]
+name = "flash-backend-esp-serial"
+version = "0.1.0"
+edition = "2021"
+authors = ["Flash Programmer GUI Team"]
+description = "ESP32 backend over the serial/USB ROM bootloader, for boards with no debug probe attached"
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "flash_backend_esp_serial"
+path = "src/lib.rs"
+
+[dependencies]
+flash-core = { path = "../../flash-core" }
+firmware-parser = { path = "../../firmware-parser" }
+device-db = { path = "../../device-db" }
+# Pinned exactly: espflash's library API changes between majors, and the whole
+# point of wrapping it behind EspLink is that an upgrade touches one file.
+espflash = { version = "=4.6.0", default-features = false, features = ["serialport"], optional = true }
+serialport = { version = "4.10", optional = true }
+md-5 = "0.10"
+crc32fast = "1.4"
+
+[features]
+# The real serial link. Off in a build that only wants the fake transport
+# (documentation builds, or a CI job without libudev).
+default = ["hardware"]
+hardware = ["dep:espflash", "dep:serialport"]
