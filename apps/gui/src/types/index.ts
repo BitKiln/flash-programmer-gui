@@ -29,6 +29,24 @@ export interface TargetInfo {
   cancellable_stages: string[];
 }
 
+/** One thing that was done to one board. */
+export interface HistoryRecord {
+  timestamp_ms: number;
+  operation: "flash" | "erase" | "verify";
+  outcome: "succeeded" | "failed" | "cancelled";
+  target: string;
+  probe: string | null;
+  file_path: string | null;
+  /** CRC32 of the image, which is what says *which* build went on. */
+  image_crc32: number | null;
+  bytes: number | null;
+  duration_ms: number;
+  serial: string | null;
+  /** Whether the image was checked against the target afterwards. */
+  verified: boolean;
+  message: string;
+}
+
 /** One erasable unit of the target's flash. */
 export interface SectorInfo {
   index: number;

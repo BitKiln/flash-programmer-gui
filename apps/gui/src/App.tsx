@@ -4,14 +4,15 @@ import { FlashControls } from "./components/FlashControls";
 import { ConsoleOutput } from "./components/ConsoleOutput";
 import { MemoryViewer } from "./components/MemoryViewer";
 import { FlashMap } from "./components/FlashMap";
+import { HistoryPanel } from "./components/HistoryPanel";
 import { BatchPanel } from "./components/BatchPanel";
 import { useState } from "react";
 import { useFlashTelemetry } from "./hooks/useFlashProgrammer";
 
 export function App() {
-  const [tab, setTab] = useState<"firmware" | "memory" | "map" | "batch">(
-    "firmware"
-  );
+  const [tab, setTab] = useState<
+    "firmware" | "memory" | "map" | "batch" | "history"
+  >("firmware");
 
   // Exactly one subscriber for the whole app; every panel shares the reducer
   // these events land in.
@@ -41,7 +42,9 @@ export function App() {
         <main className="flex-1 flex flex-col overflow-hidden">
           {/* Top — Firmware inspector or memory viewer */}
           <div className="flex gap-1 px-4 pt-3 shrink-0">
-            {(["firmware", "memory", "map", "batch"] as const).map((name) => (
+            {(
+              ["firmware", "memory", "map", "batch", "history"] as const
+            ).map((name) => (
               <button
                 key={name}
                 onClick={() => setTab(name)}
@@ -57,7 +60,9 @@ export function App() {
                     ? "Memory"
                     : name === "map"
                       ? "Flash Map"
-                      : "Batch"}
+                      : name === "batch"
+                        ? "Batch"
+                        : "History"}
               </button>
             ))}
           </div>
@@ -68,8 +73,10 @@ export function App() {
               <MemoryViewer />
             ) : tab === "map" ? (
               <FlashMap />
-            ) : (
+            ) : tab === "batch" ? (
               <BatchPanel />
+            ) : (
+              <HistoryPanel />
             )}
           </div>
 

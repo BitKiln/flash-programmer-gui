@@ -2,6 +2,7 @@ pub mod batch;
 pub mod devices;
 pub mod erase;
 pub mod flash;
+pub mod history;
 pub mod memory;
 pub mod profile;
 pub mod reset;
@@ -240,6 +241,22 @@ pub fn is_supported_target(target: &str, mock: bool) -> bool {
     } else {
         device_db::backend_supports(device_db::scheme::PROBE_RS, target)
     }
+}
+
+/// Appends one record to the programming history.
+///
+/// A simulated run says nothing about a board, so it never reaches the default
+/// history a production line reads -- but it is still written when
+/// `--history-file` names one explicitly, which is what makes the recording
+/// testable without hardware.
+///
+/// A history that cannot be written never fails the programming just done.
+pub fn record_history(cli: &Cli, record: flash_core::HistoryRecord) {
+    let path = cli.history_file.as_deref().map(std::path::Path::new);
+    if cli.mock && path.is_none() {
+        return;
+    }
+    flash_core::history::record_quietly(&record, path);
 }
 
 /// Computes the persistent backing file path for mock flash simulation across CLI invocations.

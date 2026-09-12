@@ -70,6 +70,17 @@ pub fn handle_verify(
                     "Verification failed".to_string()
                 };
                 let cli_err = CliError::FlashVerify(err_msg);
+                let mut record = flash_core::HistoryRecord::now(
+                    flash_core::Operation::Verify,
+                    flash_core::Outcome::Failed,
+                    &args.target,
+                );
+                record.probe = conn_config.probe_id.clone();
+                record.file_path = Some(args.file.clone());
+                record.duration_ms = duration_ms;
+                record.message = cli_err.message().to_string();
+                crate::commands::record_history(cli, record);
+
                 callback.emit_error(cli_err.exit_code(), cli_err.message());
                 Err(cli_err)
             } else {
@@ -77,6 +88,19 @@ pub fn handle_verify(
                     "Memory verified successfully ({} bytes, CRC32: 0x{:08X}) in {} ms",
                     report.bytes_verified, report.checksum_actual, duration_ms
                 );
+                let mut record = flash_core::HistoryRecord::now(
+                    flash_core::Operation::Verify,
+                    flash_core::Outcome::Succeeded,
+                    &args.target,
+                );
+                record.probe = conn_config.probe_id.clone();
+                record.file_path = Some(args.file.clone());
+                record.bytes = Some(report.bytes_verified as u64);
+                record.duration_ms = duration_ms;
+                record.verified = true;
+                record.message = message.clone();
+                crate::commands::record_history(cli, record);
+
                 callback.emit_complete(None, Some(report.bytes_verified), duration_ms, &message);
                 Ok(())
             }
@@ -99,6 +123,16 @@ pub fn handle_verify(
                 }
                 _ => CliError::from(err),
             };
+            let mut record = flash_core::HistoryRecord::now(
+                flash_core::Operation::Verify,
+                flash_core::Outcome::Failed,
+                &args.target,
+            );
+            record.probe = conn_config.probe_id.clone();
+            record.file_path = Some(args.file.clone());
+            record.message = cli_err.message().to_string();
+            crate::commands::record_history(cli, record);
+
             callback.emit_error(cli_err.exit_code(), cli_err.message());
             Err(cli_err)
         }

@@ -16,6 +16,10 @@ pub struct AppState {
     pub backend: Arc<Mutex<Box<dyn flash_core::FlashBackend>>>,
     /// Set by `cancel_operation`, polled by the backends at block boundaries.
     pub cancelled: Arc<AtomicBool>,
+    /// Identifier of the probe or port the open session went through, kept for
+    /// the programming history: "which board" is half the record, and "which
+    /// station" is the other half on a line with several.
+    pub probe_id: Arc<Mutex<Option<String>>>,
 }
 
 impl Default for AppState {
@@ -24,6 +28,7 @@ impl Default for AppState {
             session: Arc::new(Mutex::new(None)),
             backend: Arc::new(Mutex::new(Box::new(flash_backends::default_registry()))),
             cancelled: Arc::new(AtomicBool::new(false)),
+            probe_id: Arc::new(Mutex::new(None)),
         }
     }
 }

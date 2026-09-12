@@ -1,6 +1,7 @@
 pub mod batch;
 pub mod conformance;
 pub mod error;
+pub mod history;
 pub mod manager;
 pub mod profile;
 pub mod progress;
@@ -15,6 +16,7 @@ pub use batch::{
     RearmPolicy, StopReason, UnitRecord, UnitStatus,
 };
 pub use error::FlashError;
+pub use history::{HistoryRecord, Operation, Outcome};
 pub use manager::FlashManager;
 pub use progress::{
     ClosureProgressCallback, FlashEvent, FlashStage, LogLevel, NoopProgressCallback,

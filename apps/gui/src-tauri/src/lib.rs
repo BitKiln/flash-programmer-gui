@@ -35,6 +35,7 @@ pub fn run() {
             commands::reset_target,
             commands::cancel_operation,
             commands::flash_map,
+            commands::programming_history,
             commands::read_memory,
             commands::write_memory,
             commands::can_write_memory,

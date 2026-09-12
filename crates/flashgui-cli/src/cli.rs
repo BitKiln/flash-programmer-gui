@@ -28,6 +28,11 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub profile_file: Option<String>,
 
+    /// Path to the programming history file, instead of the default in the
+    /// configuration directory
+    #[arg(long, global = true, value_name = "PATH")]
+    pub history_file: Option<String>,
+
     /// Load a probe-rs target description, for a chip probe-rs was not built
     /// with. Repeatable.
     ///
@@ -59,6 +64,9 @@ pub enum Commands {
 
     /// Reset target MCU
     Reset(ResetArgs),
+
+    /// Show what has been programmed, most recent first
+    History(HistoryArgs),
 
     /// Read or write target memory directly (RAM, registers, option bytes)
     Memory(MemoryArgs),
@@ -312,6 +320,21 @@ pub struct EraseArgs {
     /// Length in bytes to erase, decimal or hex (e.g. 4096 or 0x1000)
     #[arg(long)]
     pub length: Option<String>,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct HistoryArgs {
+    /// Number of records to show, newest first
+    #[arg(short, long, default_value_t = 20)]
+    pub limit: usize,
+
+    /// Show only records for this target
+    #[arg(short, long)]
+    pub target: Option<String>,
+
+    /// Show only failures
+    #[arg(long)]
+    pub failures: bool,
 }
 
 /// Direct memory access, which is the bus rather than the flash controller.

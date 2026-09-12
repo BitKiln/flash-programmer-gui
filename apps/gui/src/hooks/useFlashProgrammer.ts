@@ -14,6 +14,7 @@ import type {
   TargetSuggestion,
   MemoryRead,
   FlashMapInfo,
+  HistoryRecord,
   BatchOptions,
   BatchReport,
 } from "../types";
@@ -355,6 +356,20 @@ export function useFlashProgrammer() {
       } catch (err) {
         addLog("error", `Memory read failed: ${err}`);
         return null;
+      }
+    },
+    [addLog]
+  );
+
+  /// What has been programmed, newest first. Shared with the CLI, which
+  /// appends to the same file.
+  const readHistory = useCallback(
+    async (limit?: number): Promise<HistoryRecord[]> => {
+      try {
+        return await invoke<HistoryRecord[]>("programming_history", { limit });
+      } catch (err) {
+        addLog("error", `Could not read the programming history: ${err}`);
+        return [];
       }
     },
     [addLog]
@@ -712,6 +727,7 @@ export function useFlashProgrammer() {
     cancelOperation,
     readMemory,
     readFlashMap,
+    readHistory,
     writeMemory,
     canWriteMemory,
     readFirmwareWindow,

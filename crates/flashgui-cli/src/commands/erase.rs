@@ -4,7 +4,9 @@ use std::time::Instant;
 use flash_core::types::{ConnectionConfig, ResetType};
 
 use crate::cli::{parse_address, Cli, EraseArgs};
-use crate::commands::{get_backend, is_supported_target, open_session, persist_mock_session};
+use crate::commands::{
+    get_backend, is_supported_target, open_session, persist_mock_session, record_history,
+};
 use crate::exit_codes::CliError;
 
 /// The erase length as given, or the default, for the completion message.
@@ -81,11 +83,30 @@ pub fn handle_erase(
                     duration_ms
                 )
             };
+            let mut record = flash_core::HistoryRecord::now(
+                flash_core::Operation::Erase,
+                flash_core::Outcome::Succeeded,
+                &args.target,
+            );
+            record.probe = conn_config.probe_id.clone();
+            record.duration_ms = duration_ms;
+            record.message = message.clone();
+            record_history(cli, record);
+
             callback.emit_complete(None, None, duration_ms, &message);
             Ok(())
         }
         Err(err) => {
             let cli_err = CliError::from(err);
+            let mut record = flash_core::HistoryRecord::now(
+                flash_core::Operation::Erase,
+                flash_core::Outcome::Failed,
+                &args.target,
+            );
+            record.probe = conn_config.probe_id.clone();
+            record.message = cli_err.message().to_string();
+            record_history(cli, record);
+
             callback.emit_error(cli_err.exit_code(), cli_err.message());
             Err(cli_err)
         }
