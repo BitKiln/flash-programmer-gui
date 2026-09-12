@@ -2,6 +2,7 @@ pub mod batch;
 pub mod devices;
 pub mod erase;
 pub mod flash;
+pub mod memory;
 pub mod profile;
 pub mod reset;
 pub mod verify;
@@ -256,6 +257,16 @@ pub fn mock_backing_file_path(target_name: &str, probe_id: Option<&str>) -> Path
     ))
 }
 
+/// Backing file for the simulated target's RAM.
+///
+/// Kept alongside the flash image because a real target keeps its RAM while it
+/// stays powered: a write in one invocation that read back as zeros in the next
+/// would look like a write that did not take.
+pub fn mock_ram_backing_file_path(target_name: &str, probe_id: Option<&str>) -> PathBuf {
+    let flash = mock_backing_file_path(target_name, probe_id);
+    flash.with_extension("ram.bin")
+}
+
 /// Establishes target connection session, restoring non-volatile mock flash memory if in mock mode.
 pub fn open_session(
     backend: &dyn FlashBackend,
@@ -282,6 +293,13 @@ pub fn open_session(
                                 config.probe_id.as_deref() == Some(&p.identifier)
                             });
                         }
+                        let ram_backing =
+                            mock_ram_backing_file_path(&target.name, config.probe_id.as_deref());
+                        if let Ok(ram) = fs::read(&ram_backing) {
+                            if ram.len() == s.ram.len() {
+                                s.ram = ram;
+                            }
+                        }
                         return Ok(Box::new(s));
                     }
                 }
@@ -306,6 +324,14 @@ pub fn persist_mock_session(
             if let Ok(data) = session.read_memory(flash_base, flash_size) {
                 let backing = mock_backing_file_path(&target_name, probe_id);
                 let _ = fs::write(&backing, data);
+            }
+            if let Some((ram_base, ram_size)) =
+                session.target_info().map(|t| (t.ram_base, t.ram_size))
+            {
+                if let Ok(ram) = session.read_memory(ram_base, ram_size) {
+                    let backing = mock_ram_backing_file_path(&target_name, probe_id);
+                    let _ = fs::write(&backing, ram);
+                }
             }
         }
     }

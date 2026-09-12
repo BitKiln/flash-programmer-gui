@@ -60,6 +60,9 @@ pub enum Commands {
     /// Reset target MCU
     Reset(ResetArgs),
 
+    /// Read or write target memory directly (RAM, registers, option bytes)
+    Memory(MemoryArgs),
+
     /// Manage reusable programming profiles
     Profile {
         #[command(subcommand)]
@@ -309,6 +312,75 @@ pub struct EraseArgs {
     /// Length in bytes to erase, decimal or hex (e.g. 4096 or 0x1000)
     #[arg(long)]
     pub length: Option<String>,
+}
+
+/// Direct memory access, which is the bus rather than the flash controller.
+///
+/// Nothing on this path erases, so a write into the flash region is refused --
+/// use `flash` for that.
+#[derive(Args, Debug, Clone)]
+pub struct MemoryArgs {
+    #[command(subcommand)]
+    pub action: MemorySubcommand,
+
+    /// Target microcontroller name (e.g. STM32H753ZI); "auto" identifies the connected chip
+    #[arg(short, long, default_value = "auto")]
+    pub target: String,
+
+    /// Specific probe serial number or ID
+    #[arg(short, long)]
+    pub probe: Option<String>,
+
+    /// Serial port of an ESP target in download mode (e.g. COM7, /dev/ttyUSB0).
+    ///
+    /// Shorthand for `--probe esp:<port>`. No debug probe is involved.
+    #[arg(long, conflicts_with = "probe")]
+    pub port: Option<String>,
+
+    /// Baud rate for a serial bootloader connection (default 460800).
+    #[arg(long)]
+    pub baud: Option<u32>,
+
+    /// Clock frequency in kHz
+    #[arg(short, long, default_value_t = 2000)]
+    pub speed: u32,
+
+    /// Debug interface protocol
+    #[arg(short, long, value_enum, default_value_t = Protocol::Swd)]
+    pub interface: Protocol,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum MemorySubcommand {
+    /// Read bytes and print them as a hex dump
+    Read {
+        /// Start address, decimal or hex (e.g. 0x20000000)
+        #[arg(short, long)]
+        address: String,
+
+        /// Number of bytes to read, decimal or hex (e.g. 256 or 0x100)
+        #[arg(short, long, default_value = "256")]
+        length: String,
+
+        /// Write the bytes to this file as a raw binary instead of printing them
+        #[arg(short, long)]
+        out: Option<String>,
+    },
+
+    /// Write bytes to an address
+    Write {
+        /// Start address, decimal or hex (e.g. 0x20000000)
+        #[arg(short, long)]
+        address: String,
+
+        /// Bytes as hex digits (e.g. DEADBEEF). Conflicts with --file.
+        #[arg(short, long, conflicts_with = "file")]
+        data: Option<String>,
+
+        /// Raw binary file whose contents are written at the address
+        #[arg(short, long)]
+        file: Option<String>,
+    },
 }
 
 #[derive(Args, Debug, Clone)]

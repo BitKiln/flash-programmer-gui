@@ -49,7 +49,10 @@ fn a_write_into_flash_is_refused_rather_than_attempted() {
     let base = session.target_info().expect("target").flash_base;
     let err = session.write_memory(base, &[0x00]).unwrap_err();
     match err {
-        FlashError::InvalidAddress { address, ref reason } => {
+        FlashError::InvalidAddress {
+            address,
+            ref reason,
+        } => {
             assert_eq!(address, base);
             assert!(
                 reason.contains("program"),
