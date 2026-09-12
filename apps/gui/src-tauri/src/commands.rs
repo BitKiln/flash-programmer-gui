@@ -272,6 +272,12 @@ fn flash_event_to_dto(event: &FlashEvent) -> FlashEventDto {
     }
 }
 
+/// Flash base of the connected target, if anything is connected.
+fn connected_flash_base(state: &State<'_, AppState>) -> Option<u32> {
+    let session = state.session.lock().ok()?;
+    Some(session.as_ref()?.target_info()?.flash_base)
+}
+
 /// Channel an event is published on, per the IPC contract.
 fn event_channel(event: &FlashEvent) -> &'static str {
     match event {
@@ -503,7 +509,16 @@ pub async fn auto_detect_target(
 }
 
 #[tauri::command]
-pub fn load_firmware(path: String, base_address: Option<u32>) -> Result<FirmwareInfoDto, String> {
+pub fn load_firmware(
+    path: String,
+    base_address: Option<u32>,
+    state: State<'_, AppState>,
+) -> Result<FirmwareInfoDto, String> {
+    // A raw .bin carries no addresses of its own, so one has to be assumed.
+    // Assuming a fixed 0x08000000 put an ESP image -- whose flash starts at 0
+    // -- a long way past the end of the part. When a target is connected, its
+    // own flash base is the only sensible guess.
+    let base_address = base_address.or_else(|| connected_flash_base(&state));
     let image = firmware_parser::parse_file(&path, base_address).map_err(|e| e.to_string())?;
 
     Ok(FirmwareInfoDto {

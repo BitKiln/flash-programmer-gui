@@ -2,10 +2,37 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useAppContext } from "../state/AppContext";
 import { useFlashProgrammer } from "../hooks/useFlashProgrammer";
 
+/** A raw .bin is the only format that carries no addresses of its own. */
+function isRawBinary(format: string): boolean {
+  return format.toLowerCase().includes("raw");
+}
+
 export function FirmwarePanel() {
   const { state, dispatch } = useAppContext();
   const { loadFirmware } = useFlashProgrammer();
+  const [baseInput, setBaseInput] = useState("");
+  const [baseError, setBaseError] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
+  const applyBase = async () => {
+    const path = state.firmwarePath;
+    if (!path) {
+      return;
+    }
+    const text = baseInput.trim();
+    if (text === "") {
+      setBaseError(null);
+      await loadFirmware(path);
+      return;
+    }
+    const parsed = Number(text.startsWith("0x") || text.startsWith("0X") ? text : `0x${text}`);
+    if (!Number.isInteger(parsed) || parsed < 0) {
+      setBaseError(`"${text}" is not an address. Try 0x10000.`);
+      return;
+    }
+    setBaseError(null);
+    await loadFirmware(path, parsed);
+  };
+
   const loadFirmwareRef = useRef(loadFirmware);
   loadFirmwareRef.current = loadFirmware;
 
@@ -117,6 +144,47 @@ export function FirmwarePanel() {
           Supports .hex, .ihex, .bin, .elf
         </p>
       </div>
+
+      {/* A raw binary carries no addresses, so the assumed one is editable. */}
+      {state.firmware && isRawBinary(state.firmware.format) && (
+        <div className="bg-bg-primary rounded-lg p-3 border border-gray-700 space-y-1.5">
+          <label
+            htmlFor="base-address"
+            className="block text-xs text-gray-400 uppercase tracking-wider"
+          >
+            Base address
+          </label>
+          <form
+            className="flex gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void applyBase();
+            }}
+          >
+            <input
+              id="base-address"
+              className="flex-1 min-w-0 bg-bg-secondary border border-gray-600 rounded px-2 py-1 text-sm font-mono text-gray-200 focus:border-accent-red focus:outline-none"
+              value={baseInput}
+              placeholder={formatAddress(state.firmware.base_address)}
+              onChange={(e) => setBaseInput(e.target.value)}
+            />
+            <button
+              type="submit"
+              className="shrink-0 px-2.5 py-1 bg-bg-tertiary border border-gray-600 rounded text-sm text-gray-300 hover:bg-gray-600 transition-colors"
+            >
+              Apply
+            </button>
+          </form>
+          {baseError ? (
+            <p className="text-xs text-red-400">{baseError}</p>
+          ) : (
+            <p className="text-xs text-gray-500">
+              A .bin has no addresses of its own, so this one is assumed. It
+              defaults to the connected target&apos;s flash base.
+            </p>
+          )}
+        </div>
+      )}
 
       {/* Firmware Info */}
       {state.firmware && (
