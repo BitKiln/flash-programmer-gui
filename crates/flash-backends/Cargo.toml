@@ -10,8 +10,10 @@ license = "MIT OR Apache-2.0"
 flash-core = { path = "../flash-core" }
 flash-backend-mock = { path = "../backends/mock", optional = true }
 flash-backend-probe-rs = { path = "../backends/probe-rs", optional = true }
+flash-backend-esp-serial = { path = "../backends/esp-serial", optional = true }
 
 [features]
-default = ["mock-probe", "live-probe"]
+default = ["mock-probe", "live-probe", "esp-serial"]
 mock-probe = ["dep:flash-backend-mock"]
 live-probe = ["dep:flash-backend-probe-rs"]
+esp-serial = ["dep:flash-backend-esp-serial"]

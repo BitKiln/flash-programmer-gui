@@ -1,7 +1,7 @@
 use std::io::Write;
 
 use flash_core::manager::FlashManager;
-use flash_core::types::{ConnectionConfig, ProgramOptions, ResetType, Transport};
+use flash_core::types::{ConnectionConfig, ProgramOptions, ResetType};
 
 use crate::cli::{Cli, FlashArgs};
 use crate::commands::{
@@ -24,6 +24,7 @@ pub fn handle_flash(
         serial,
         target,
         probe,
+        transport,
         interface,
         speed,
         base_address,
@@ -36,7 +37,7 @@ pub fn handle_flash(
     let firmware = firmware_parser::parse_file(&file_path, base_address)?;
 
     // 3. Open connection to probe & target
-    let backend = get_backend(cli.mock);
+    let backend = get_backend(cli);
     let conn_config = ConnectionConfig {
         probe_id: probe,
         target_name: target,
@@ -44,7 +45,7 @@ pub fn handle_flash(
         speed_khz: speed,
         connect_under_reset: false,
         reset_type: Some(ResetType::Software),
-        transport: Transport::DebugProbe,
+        transport,
     };
 
     let mut session = open_session(backend.as_ref(), &conn_config, cli.mock)?;

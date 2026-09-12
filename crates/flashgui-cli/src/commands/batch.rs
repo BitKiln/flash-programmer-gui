@@ -6,7 +6,7 @@ use flash_core::batch::{
     run_batch_with, BatchConfig, BatchEvent, BatchObserver, BatchReport, RearmPolicy, StopReason,
     UnitStatus,
 };
-use flash_core::types::{ConnectionConfig, ProgramOptions, ResetType, Transport};
+use flash_core::types::{ConnectionConfig, ProgramOptions, ResetType};
 use serde::Serialize;
 
 use crate::cli::{BatchArgs, Cli, Rearm};
@@ -159,7 +159,7 @@ pub fn handle_batch(
 
     let firmware = firmware_parser::parse_file(&resolved.file_path, resolved.base_address)?;
 
-    let backend = get_backend(cli.mock);
+    let backend = get_backend(cli);
     let connection = ConnectionConfig {
         probe_id: resolved.probe.clone(),
         target_name: resolved.target.clone(),
@@ -167,7 +167,7 @@ pub fn handle_batch(
         speed_khz: resolved.speed,
         connect_under_reset: false,
         reset_type: Some(ResetType::Software),
-        transport: Transport::DebugProbe,
+        transport: resolved.transport.clone(),
     };
 
     let config = BatchConfig {

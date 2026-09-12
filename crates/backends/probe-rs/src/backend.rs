@@ -16,12 +16,23 @@ use flash_core::types::{
 };
 
 /// Live hardware backend leveraging `probe-rs` to communicate with physical debug probes.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct ProbeRsLiveBackend;
+#[derive(Debug, Default, Clone)]
+pub struct ProbeRsLiveBackend {
+    /// Chip descriptions loaded at runtime, for parts probe-rs was not built
+    /// with -- every Espressif part, among others.
+    descriptions: crate::descriptions::TargetDescriptions,
+}
 
 impl ProbeRsLiveBackend {
     pub fn new() -> Self {
-        Self
+        Self::default()
+    }
+
+    /// A backend that also knows the chips described by these YAML files.
+    pub fn with_target_descriptions(
+        descriptions: crate::descriptions::TargetDescriptions,
+    ) -> Self {
+        Self { descriptions }
     }
 }
 
@@ -235,11 +246,18 @@ impl FlashBackend for ProbeRsLiveBackend {
             // Manual entry: try the raw name, then a board alias, then report
             // near matches from the registry instead of a bare failure.
             let raw = config.target_name.trim();
+            // A description loaded at runtime takes precedence: without it
+            // probe-rs has no definition for the chip at all, so there is
+            // nothing for the built-in lookup to find.
+            let selector = match self.descriptions.resolve(raw)? {
+                Some(selector) => selector,
+                None => probe_rs::config::TargetSelector::from(raw),
+            };
             let probe = open_probe_internal(&matched, config)?;
             let first = if config.connect_under_reset {
-                probe.attach_under_reset(probe_rs::config::TargetSelector::from(raw), permissions())
+                probe.attach_under_reset(selector, permissions())
             } else {
-                probe.attach(probe_rs::config::TargetSelector::from(raw), permissions())
+                probe.attach(selector, permissions())
             };
 
             match first {

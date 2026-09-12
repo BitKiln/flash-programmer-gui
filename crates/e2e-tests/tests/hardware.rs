@@ -51,7 +51,7 @@ fn probe_is_visible() {
     let out = cli.run(&["devices"]);
     out.assert_code(exit::SUCCESS);
     assert!(
-        !out.stdout.contains("No debug probes detected"),
+        !out.stdout.contains("No debug probes or ESP serial ports detected"),
         "no probe detected:\n{}",
         out.stdout
     );

@@ -28,6 +28,14 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub profile_file: Option<String>,
 
+    /// Load a probe-rs target description, for a chip probe-rs was not built
+    /// with. Repeatable.
+    ///
+    /// probe-rs ships no Espressif definitions, so the JTAG route to an ESP
+    /// chip needs one of these; the serial bootloader route (--port) does not.
+    #[arg(long, global = true, value_name = "PATH")]
+    pub target_yaml: Vec<std::path::PathBuf>,
+
     #[command(subcommand)]
     pub command: Commands,
 }
@@ -113,6 +121,15 @@ pub struct FlashArgs {
     /// Clock frequency in kHz
     #[arg(short, long)]
     pub speed: Option<u32>,
+    /// Serial port of an ESP target in download mode (e.g. COM7, /dev/ttyUSB0).
+    ///
+    /// Shorthand for `--probe esp:<port>`. No debug probe is involved.
+    #[arg(long, conflicts_with = "probe")]
+    pub port: Option<String>,
+
+    /// Baud rate for a serial bootloader connection (default 460800).
+    #[arg(long)]
+    pub baud: Option<u32>,
 
     /// Base address for raw binary files (e.g. 0x08000000)
     #[arg(short = 'a', long)]
@@ -263,6 +280,16 @@ pub struct EraseArgs {
     #[arg(short, long)]
     pub probe: Option<String>,
 
+    /// Serial port of an ESP target in download mode (e.g. COM7, /dev/ttyUSB0).
+    ///
+    /// Shorthand for `--probe esp:<port>`. No debug probe is involved.
+    #[arg(long, conflicts_with = "probe")]
+    pub port: Option<String>,
+
+    /// Baud rate for a serial bootloader connection (default 460800).
+    #[arg(long)]
+    pub baud: Option<u32>,
+
     /// Clock frequency in kHz
     #[arg(short, long, default_value_t = 2000)]
     pub speed: u32,
@@ -279,9 +306,9 @@ pub struct EraseArgs {
     #[arg(long)]
     pub address: Option<String>,
 
-    /// Length in bytes to erase
+    /// Length in bytes to erase, decimal or hex (e.g. 4096 or 0x1000)
     #[arg(long)]
-    pub length: Option<u32>,
+    pub length: Option<String>,
 }
 
 #[derive(Args, Debug, Clone)]
@@ -296,6 +323,16 @@ pub struct VerifyArgs {
     /// Specific probe serial number or ID
     #[arg(short, long)]
     pub probe: Option<String>,
+
+    /// Serial port of an ESP target in download mode (e.g. COM7, /dev/ttyUSB0).
+    ///
+    /// Shorthand for `--probe esp:<port>`. No debug probe is involved.
+    #[arg(long, conflicts_with = "probe")]
+    pub port: Option<String>,
+
+    /// Baud rate for a serial bootloader connection (default 460800).
+    #[arg(long)]
+    pub baud: Option<u32>,
 
     /// Clock frequency in kHz
     #[arg(short, long, default_value_t = 2000)]
@@ -319,6 +356,16 @@ pub struct ResetArgs {
     /// Specific probe serial number or ID
     #[arg(short, long)]
     pub probe: Option<String>,
+
+    /// Serial port of an ESP target in download mode (e.g. COM7, /dev/ttyUSB0).
+    ///
+    /// Shorthand for `--probe esp:<port>`. No debug probe is involved.
+    #[arg(long, conflicts_with = "probe")]
+    pub port: Option<String>,
+
+    /// Baud rate for a serial bootloader connection (default 460800).
+    #[arg(long)]
+    pub baud: Option<u32>,
 
     /// Clock frequency in kHz
     #[arg(short, long, default_value_t = 2000)]

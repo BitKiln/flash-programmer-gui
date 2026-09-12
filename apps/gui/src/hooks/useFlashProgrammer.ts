@@ -25,10 +25,15 @@ import type {
  * arrives as `flash:progress` / `flash:status` / `flash:log` events pushed by
  * the backend.
  */
-export function useFlashProgrammer() {
-  const { state, dispatch, addLog } = useAppContext();
-
-  // ── Flash telemetry ──────────────────────────────────────────────────────
+/**
+ * Subscribes to the backend's pushed telemetry.
+ *
+ * Call this **once**, at the root. The events land in the shared reducer, so a
+ * subscription per consuming component would add every log line once per
+ * mounted component -- three copies of each line on the firmware tab.
+ */
+export function useFlashTelemetry() {
+  const { dispatch, addLog } = useAppContext();
 
   const handleEvent = useCallback(
     (event: FlashEventDto) => {
@@ -106,27 +111,61 @@ export function useFlashProgrammer() {
       unlisteners.forEach((stop) => stop());
     };
   }, []);
+}
+
+/**
+ * Custom hook wrapping all Tauri IPC invoke calls.
+ *
+ * Telemetry is not subscribed to here: see `useFlashTelemetry`.
+ */
+export function useFlashProgrammer() {
+  const { state, dispatch, addLog } = useAppContext();
+
+  // A raw binary was parsed at an address the user can choose, so every later
+  // command has to be told the same one. Re-parsing without it would put the
+  // image back at the default and flash it to the wrong place.
+  const loadedBaseAddress = useCallback(
+    () =>
+      state.firmware && state.firmware.format.toLowerCase().includes("raw")
+        ? state.firmware.base_address
+        : null,
+    [state.firmware]
+  );
 
   // ── Probe Discovery ──────────────────────────────────────────────────────
 
   const refreshProbes = useCallback(async () => {
     try {
-      addLog("info", "Scanning USB ports for physical debug probes (probe-rs)...");
+      addLog("info", "Scanning for debug probes and serial ports...");
       const probes = await invoke<ProbeInfo[]>("list_probes");
       dispatch({ type: "SET_PROBES", probes });
 
       const hardwareProbes = probes.filter(
         (p) => !p.identifier.startsWith("mock:") && p.probe_type !== "VirtualMock"
       );
-      if (hardwareProbes.length > 0) {
-        addLog(
-          "success",
-          `Detected ${hardwareProbes.length} physical hardware probe(s): ${hardwareProbes.map((p) => p.product_name).join(", ")}`
-        );
+      // A serial port is not a debug probe, and calling one a probe in the log
+      // makes it look as though a board has a debugger attached when it does
+      // not.
+      const serialPorts = hardwareProbes.filter((p) =>
+        p.identifier.startsWith("esp:")
+      );
+      const debugProbes = hardwareProbes.filter(
+        (p) => !p.identifier.startsWith("esp:")
+      );
+      const found = [
+        debugProbes.length > 0
+          ? `${debugProbes.length} debug probe(s): ${debugProbes.map((p) => p.product_name).join(", ")}`
+          : null,
+        serialPorts.length > 0
+          ? `${serialPorts.length} serial port(s): ${serialPorts.map((p) => p.product_name).join(", ")}`
+          : null,
+      ].filter(Boolean);
+      if (found.length > 0) {
+        addLog("success", `Detected ${found.join("; ")}`);
       } else {
         addLog(
           "info",
-          "No physical USB debug probe detected. (Virtual simulation mode available)"
+          "No debug probe or serial port detected. (Simulator mode is available)"
         );
       }
       if (probes.length > 0 && !state.selectedProbe) {
@@ -144,10 +183,17 @@ export function useFlashProgrammer() {
       probeId: string | null,
       target: string,
       protocol: string,
-      speed: number
+      speed: number,
+      /// Serial bootloader rate. Undefined for a debug probe, which has none.
+      baud?: number
     ): Promise<string | null> => {
       dispatch({ type: "SET_CONNECTION_STATUS", status: "connecting" });
-      addLog("info", `Connecting to ${target} via ${protocol}...`);
+      addLog(
+        "info",
+        baud === undefined
+          ? `Connecting to ${target} via ${protocol}...`
+          : `Connecting to ${target} over the serial bootloader at ${baud} baud...`
+      );
 
       try {
         const info = await invoke<TargetInfo>("connect_probe", {
@@ -155,6 +201,7 @@ export function useFlashProgrammer() {
           target,
           protocol,
           speed,
+          baud,
         });
         dispatch({ type: "SET_TARGET_INFO", info });
         dispatch({ type: "SET_CONNECTION_STATUS", status: "connected" });
@@ -191,16 +238,23 @@ export function useFlashProgrammer() {
     async (
       probeId: string | null,
       protocol: string,
-      speed: number
+      speed: number,
+      baud?: number
     ): Promise<{ info: TargetInfo | null; error: string | null }> => {
       dispatch({ type: "SET_CONNECTION_STATUS", status: "connecting" });
-      addLog("info", `Auto-detecting connected MCU board via ${protocol}...`);
+      addLog(
+        "info",
+        baud === undefined
+          ? `Auto-detecting connected MCU board via ${protocol}...`
+          : "Asking the ESP bootloader which chip it is running on..."
+      );
 
       try {
         const info = await invoke<TargetInfo>("auto_detect_target", {
           probeId,
           protocol,
           speed,
+          baud,
         });
         dispatch({ type: "SET_TARGET_INFO", info });
         dispatch({ type: "SET_CONNECTION_STATUS", status: "connected" });
@@ -235,11 +289,30 @@ export function useFlashProgrammer() {
           "success",
           `Loaded ${info.format} firmware: ${info.total_firmware_bytes} bytes, ${info.segment_count} segment(s)`
         );
+
+        // A raw binary has no address of its own, so one was assumed. On an
+        // ESP part every plausible offset is a valid address, which means a
+        // wrong guess flashes cleanly and boots to nothing -- worth saying out
+        // loud, since the alternative is a silent success.
+        if (
+          baseAddress === undefined &&
+          info.format.toLowerCase().includes("raw") &&
+          state.targetInfo?.flash_base === 0
+        ) {
+          addLog(
+            "warn",
+            `No address given for a raw binary, so it will be written at ` +
+              `0x${info.base_address.toString(16).toUpperCase()}. On an ESP part a ` +
+              `bootloader or combined image usually goes at 0x1000, an ESP-IDF ` +
+              `application at 0x10000, and a merged Arduino export at 0x0. Set the ` +
+              `base address above if that is not the one you want.`
+          );
+        }
       } catch (err) {
         addLog("error", `Failed to load firmware: ${err}`);
       }
     },
-    [dispatch, addLog]
+    [dispatch, addLog, state.targetInfo]
   );
 
   // ── Cancellation ─────────────────────────────────────────────────────────
@@ -293,7 +366,7 @@ export function useFlashProgrammer() {
       try {
         return await invoke<(number | null)[]>("read_firmware_window", {
           path: state.firmwarePath,
-          baseAddress: null,
+          baseAddress: loadedBaseAddress(),
           address,
           length,
         });
@@ -302,7 +375,7 @@ export function useFlashProgrammer() {
         return null;
       }
     },
-    [state.firmwarePath, addLog]
+    [state.firmwarePath, loadedBaseAddress, addLog]
   );
 
   const saveMemoryRegion = useCallback(
@@ -419,7 +492,7 @@ export function useFlashProgrammer() {
     try {
       const result = await invoke<FlashResult>("flash_firmware", {
         path: state.firmwarePath,
-        baseAddress: null,
+        baseAddress: loadedBaseAddress(),
         verify: state.flashOptions.verify,
         reset: state.flashOptions.reset,
         chipErase: state.flashOptions.chipErase,
@@ -442,6 +515,7 @@ export function useFlashProgrammer() {
   }, [
     state.firmwarePath,
     state.flashOptions,
+    loadedBaseAddress,
     dispatch,
     addLog,
     reportFailure,
@@ -481,7 +555,7 @@ export function useFlashProgrammer() {
     try {
       const result = await invoke<VerifyResult>("verify_firmware", {
         path: state.firmwarePath,
-        baseAddress: null,
+        baseAddress: loadedBaseAddress(),
       });
 
       dispatch({ type: "SET_FLASH_STATUS", status: "completed" });
@@ -504,6 +578,7 @@ export function useFlashProgrammer() {
     }
   }, [
     state.firmwarePath,
+    loadedBaseAddress,
     dispatch,
     addLog,
     reportFailure,
@@ -522,7 +597,7 @@ export function useFlashProgrammer() {
       try {
         const report = await invoke<BatchReport>("start_batch", {
           path: options.path,
-          baseAddress: options.baseAddress,
+          baseAddress: options.baseAddress ?? loadedBaseAddress(),
           probeId: options.probeId,
           target: options.target,
           protocol: options.protocol,
@@ -562,7 +637,7 @@ export function useFlashProgrammer() {
         return null;
       }
     },
-    [dispatch, addLog, reportFailure]
+    [loadedBaseAddress, dispatch, addLog, reportFailure]
   );
 
   // ── Reset ────────────────────────────────────────────────────────────────

@@ -1,7 +1,7 @@
 use std::io::Write;
 use std::time::Instant;
 
-use flash_core::types::{ConnectionConfig, ResetType, Transport};
+use flash_core::types::{ConnectionConfig, ResetType};
 
 use crate::cli::{Cli, ResetArgs};
 use crate::commands::{get_backend, is_supported_target, open_session};
@@ -21,15 +21,20 @@ pub fn handle_reset(
         )));
     }
 
-    let backend = get_backend(cli.mock);
+    let backend = get_backend(cli);
+    let (probe_id, transport) = crate::commands::resolve_transport(
+        args.probe.as_deref(),
+        args.port.as_deref(),
+        args.baud,
+    )?;
     let conn_config = ConnectionConfig {
-        probe_id: args.probe.clone(),
+        probe_id,
         target_name: args.target.clone(),
         protocol: args.interface.into(),
         speed_khz: args.speed,
         connect_under_reset: false,
         reset_type: Some(ResetType::Software),
-        transport: Transport::DebugProbe,
+        transport,
     };
 
     let mut session = open_session(backend.as_ref(), &conn_config, cli.mock)?;

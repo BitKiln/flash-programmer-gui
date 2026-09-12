@@ -15,7 +15,7 @@ use crate::exit_codes::CliError;
 use flash_core::error::FlashError;
 use flash_backend_mock::{FaultInjector, MockFlashMemory, MockFlashSession};
 use flash_core::traits::{FlashBackend, FlashSession};
-use flash_core::types::ConnectionConfig;
+use flash_core::types::{ConnectionConfig, Transport};
 
 /// Flash parameters after the CLI-over-profile-over-default hierarchy has been
 /// applied. `flash` and `batch` accept the same flags, so they resolve them the
@@ -27,6 +27,9 @@ pub struct ResolvedFlash {
     pub serial: Option<flash_core::SerialConfig>,
     pub target: String,
     pub probe: Option<String>,
+    /// How to reach the target. Serial when a `--port` or an `esp:`
+    /// identifier was given, a debug probe otherwise.
+    pub transport: Transport,
     pub interface: Protocol,
     pub speed: u32,
     pub base_address: Option<u32>,
@@ -78,6 +81,9 @@ pub fn resolve_flash_params(cli: &Cli, args: &FlashArgs) -> Result<ResolvedFlash
             .as_ref()
             .and_then(|p| p.probe_id().map(ToString::to_string))
     });
+
+    let (probe, transport) =
+        resolve_transport(probe.as_deref(), args.port.as_deref(), args.baud)?;
 
     let interface = args
         .interface
@@ -145,6 +151,7 @@ pub fn resolve_flash_params(cli: &Cli, args: &FlashArgs) -> Result<ResolvedFlash
         serial,
         target,
         probe,
+        transport,
         interface,
         speed,
         base_address,
@@ -154,17 +161,64 @@ pub fn resolve_flash_params(cli: &Cli, args: &FlashArgs) -> Result<ResolvedFlash
     })
 }
 
+/// Resolves the probe identifier and transport from the connection flags.
+///
+/// `--port COM7` is shorthand for `--probe esp:COM7`: the registry routes on
+/// the scheme, so a serial target needs no separate code path. `--baud` only
+/// means something once the connection is a serial one, and saying so is more
+/// use than silently ignoring it.
+pub fn resolve_transport(
+    probe: Option<&str>,
+    port: Option<&str>,
+    baud: Option<u32>,
+) -> Result<(Option<String>, Transport), CliError> {
+    let probe_id = match (port, probe) {
+        (Some(port), _) => Some(format!("esp:{port}")),
+        (None, Some(probe)) => Some(probe.to_string()),
+        (None, None) => None,
+    };
+
+    let is_serial = probe_id
+        .as_deref()
+        .map(|id| id.starts_with("esp:"))
+        .unwrap_or(false);
+
+    if !is_serial {
+        if baud.is_some() {
+            return Err(CliError::InvalidArgsOrProfile(
+                "--baud applies to a serial bootloader connection; pass --port <PORT>, \
+                 or --probe esp:<PORT>"
+                    .to_string(),
+            ));
+        }
+        return Ok((probe_id, Transport::DebugProbe));
+    }
+
+    Ok((
+        probe_id,
+        Transport::Serial {
+            baud: baud.unwrap_or(DEFAULT_SERIAL_BAUD),
+            controls_reset: true,
+        },
+    ))
+}
+
+/// Matches the ESP backend's default, kept here so the CLI can state it in
+/// `--help` without depending on the backend crate.
+pub const DEFAULT_SERIAL_BAUD: u32 = 460_800;
 /// The backend registry this invocation should use.
 ///
 /// `--mock` narrows the registry to the simulated backend so that a run with no
 /// hardware attached cannot accidentally reach a probe that happens to be
 /// plugged in. Without it, every compiled-in backend is available and the probe
 /// identifier's scheme decides which one serves the request.
-pub fn get_backend(mock: bool) -> Box<dyn FlashBackend> {
-    if mock {
+pub fn get_backend(cli: &Cli) -> Box<dyn FlashBackend> {
+    if cli.mock {
         Box::new(flash_backends::mock_registry())
     } else {
-        Box::new(flash_backends::default_registry())
+        Box::new(flash_backends::default_registry_with_target_descriptions(
+            cli.target_yaml.clone(),
+        ))
     }
 }
 

@@ -56,7 +56,7 @@ fn test_devices_text_output() {
     let (code, stdout, stderr) = run_cli_capture(&["--mock", "devices"]);
     assert_eq!(code, EXIT_SUCCESS, "stderr: {}", stderr);
     assert!(
-        stdout.contains("Connected Debug Probes"),
+        stdout.contains("Connected probes and serial ports"),
         "stdout was: {}",
         stdout
     );
@@ -86,7 +86,7 @@ fn test_devices_without_mock_empty() {
     let (code, stdout, _) = run_cli_capture(&["devices"]);
     assert_eq!(code, EXIT_SUCCESS);
     assert!(
-        stdout.contains("No debug probes detected") || stdout.contains("Connected Debug Probes"),
+        stdout.contains("No debug probes detected") || stdout.contains("Connected probes and serial ports"),
         "Output was: {}",
         stdout
     );
@@ -220,6 +220,45 @@ fn test_erase_full_and_sector() {
     ]);
     assert_eq!(code2, EXIT_SUCCESS, "stderr: {}", stderr2);
     assert!(stdout2.contains("completed successfully"));
+}
+
+#[test]
+fn an_erase_length_may_be_written_in_hex() {
+    // --address takes hex, so --length taking only decimal invites writing one
+    // of the pair in the wrong base, which erases the wrong amount.
+    let _guard = lock_mock_flash();
+    let (code, stdout, stderr) = run_cli_capture(&[
+        "--mock",
+        "erase",
+        "--target",
+        "STM32F401RE",
+        "--address",
+        "0x08000000",
+        "--length",
+        "0x1000",
+    ]);
+    assert_eq!(code, EXIT_SUCCESS, "stderr: {stderr}");
+    assert!(
+        stdout.contains("(4096 bytes)"),
+        "0x1000 must mean 4096 bytes; stdout was: {stdout}"
+    );
+}
+
+#[test]
+fn an_erase_length_that_is_not_a_number_is_refused() {
+    let _guard = lock_mock_flash();
+    let (code, _stdout, stderr) = run_cli_capture(&[
+        "--mock",
+        "erase",
+        "--target",
+        "STM32F401RE",
+        "--address",
+        "0x08000000",
+        "--length",
+        "lots",
+    ]);
+    assert_ne!(code, EXIT_SUCCESS, "a nonsense length must not erase anything");
+    assert!(stderr.contains("lots") || stderr.contains("Invalid address"), "stderr: {stderr}");
 }
 
 #[test]

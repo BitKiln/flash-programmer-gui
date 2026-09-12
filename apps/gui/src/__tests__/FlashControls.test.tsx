@@ -95,3 +95,55 @@ describe("FlashControls cancellation", () => {
     expect(invoke).not.toHaveBeenCalledWith("cancel_operation");
   });
 });
+
+/// Connected, idle, with the full-chip-erase option on or off.
+function EraseHarness({ chipErase }: { chipErase: boolean }) {
+  const { dispatch } = useAppContext();
+  useEffect(() => {
+    dispatch({ type: "SET_CONNECTION_STATUS", status: "connected" });
+    dispatch({ type: "SET_TARGET_INFO", info: targetInfo([]) });
+    dispatch({ type: "SET_FLASH_OPTIONS", options: { chipErase } });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  return <FlashControls />;
+}
+
+function renderErase(chipErase: boolean) {
+  return render(
+    <AppProvider>
+      <EraseHarness chipErase={chipErase} />
+    </AppProvider>
+  );
+}
+
+describe("FlashControls erase confirmation", () => {
+  beforeEach(() => invoke.mockReset());
+
+  it("asks before a full chip erase rather than wiping the part on one click", async () => {
+    invoke.mockResolvedValue("Chip erased");
+    renderErase(true);
+
+    await act(async () => {
+      screen.getByText("🗑 Erase").click();
+    });
+
+    expect(invoke).not.toHaveBeenCalledWith("erase_chip");
+    expect(screen.getByText(/cannot be undone/i)).toBeTruthy();
+
+    await act(async () => {
+      screen.getByText("Erase everything?").click();
+    });
+
+    expect(invoke).toHaveBeenCalledWith("erase_chip");
+  });
+
+  it("does not ask for a range erase, which leaves the rest of the part alone", async () => {
+    invoke.mockResolvedValue("Erased");
+    renderErase(false);
+
+    await act(async () => {
+      screen.getByText("🗑 Erase").click();
+    });
+
+    expect(invoke).toHaveBeenCalledWith("erase_chip");
+  });
+});

@@ -26,6 +26,7 @@ device-db = { path = "../../../crates/device-db" }
 tauri-plugin-single-instance = "2"
 
 [features]
-default = ["custom-protocol", "live-probe"]
+default = ["custom-protocol", "live-probe", "esp-serial"]
 custom-protocol = ["tauri/custom-protocol"]
 live-probe = ["flash-backends/live-probe"]
+esp-serial = ["flash-backends/esp-serial"]

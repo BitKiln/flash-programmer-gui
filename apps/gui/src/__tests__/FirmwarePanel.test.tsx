@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { useEffect } from "react";
 import { AppProvider, useAppContext } from "../state/AppContext";
 import { FirmwarePanel } from "../components/FirmwarePanel";
@@ -137,5 +137,106 @@ describe("FirmwarePanel", () => {
 
     const entry = await screen.findByTitle("Source: Cortex-M vector table");
     expect(entry.textContent).toContain("0x08000101");
+  });
+});
+
+const rawBinary: FirmwareInfo = {
+  ...firmware,
+  format: "Raw Binary",
+  file_path: "/build/mp_esp32.bin",
+  base_address: 0,
+  highest_address: 0x1b5250,
+  segment_count: 1,
+  entry_point: null,
+  entry_point_source: "not declared",
+  segments: [
+    {
+      index: 0,
+      start_address: 0,
+      end_address: 0x1b5250,
+      size_bytes: 0x1b5250,
+      crc32: "0xDEFB266B",
+    },
+  ],
+  gaps: [],
+};
+
+function WithRawBinary() {
+  const { dispatch } = useAppContext();
+  useEffect(() => {
+    dispatch({
+      type: "SET_FIRMWARE",
+      firmware: rawBinary,
+      path: "/build/mp_esp32.bin",
+    });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  return <FirmwarePanel />;
+}
+
+describe("FirmwarePanel base address", () => {
+  beforeEach(() => {
+    invoke.mockReset();
+    onDragDropEvent.mockReset();
+    onDragDropEvent.mockResolvedValue(() => {});
+  });
+
+  it("offers a base address for a raw binary, which carries none of its own", async () => {
+    render(
+      <AppProvider>
+        <WithRawBinary />
+      </AppProvider>
+    );
+
+    await waitFor(() => expect(screen.getByLabelText("Base address")).toBeTruthy());
+  });
+
+  it("does not offer one for a format that already has addresses", async () => {
+    render(
+      <AppProvider>
+        <WithFirmware />
+      </AppProvider>
+    );
+
+    await waitFor(() => expect(screen.getByText("Intel HEX")).toBeTruthy());
+    expect(screen.queryByLabelText("Base address")).toBeNull();
+  });
+
+  it("reloads at the address typed, so an image can go somewhere other than the default", async () => {
+    invoke.mockResolvedValue(rawBinary);
+
+    render(
+      <AppProvider>
+        <WithRawBinary />
+      </AppProvider>
+    );
+    const field = await screen.findByLabelText("Base address");
+
+    fireEvent.change(field, { target: { value: "0x1000" } });
+    fireEvent.click(screen.getByText("Apply"));
+
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("load_firmware", {
+        path: "/build/mp_esp32.bin",
+        baseAddress: 0x1000,
+      })
+    );
+  });
+
+  it("rejects something that is not an address instead of loading at NaN", async () => {
+    render(
+      <AppProvider>
+        <WithRawBinary />
+      </AppProvider>
+    );
+    const field = await screen.findByLabelText("Base address");
+
+    fireEvent.change(field, { target: { value: "the start" } });
+    fireEvent.click(screen.getByText("Apply"));
+
+    expect(await screen.findByText(/is not an address/)).toBeTruthy();
+    expect(invoke).not.toHaveBeenCalledWith(
+      "load_firmware",
+      expect.objectContaining({ baseAddress: NaN })
+    );
   });
 });

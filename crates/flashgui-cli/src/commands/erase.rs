@@ -1,11 +1,19 @@
 use std::io::Write;
 use std::time::Instant;
 
-use flash_core::types::{ConnectionConfig, ResetType, Transport};
+use flash_core::types::{ConnectionConfig, ResetType};
 
 use crate::cli::{parse_address, Cli, EraseArgs};
 use crate::commands::{get_backend, is_supported_target, open_session, persist_mock_session};
 use crate::exit_codes::CliError;
+
+/// The erase length as given, or the default, for the completion message.
+fn len_for_message(args: &EraseArgs) -> Result<u32, CliError> {
+    match args.length.as_deref() {
+        Some(text) => parse_address(text),
+        None => Ok(1024),
+    }
+}
 use crate::output::CliProgressCallback;
 
 pub fn handle_erase(
@@ -21,15 +29,20 @@ pub fn handle_erase(
         )));
     }
 
-    let backend = get_backend(cli.mock);
+    let backend = get_backend(cli);
+    let (probe_id, transport) = crate::commands::resolve_transport(
+        args.probe.as_deref(),
+        args.port.as_deref(),
+        args.baud,
+    )?;
     let conn_config = ConnectionConfig {
-        probe_id: args.probe.clone(),
+        probe_id,
         target_name: args.target.clone(),
         protocol: args.interface.into(),
         speed_khz: args.speed,
         connect_under_reset: false,
         reset_type: Some(ResetType::Software),
-        transport: Transport::DebugProbe,
+        transport,
     };
 
     let mut session = open_session(backend.as_ref(), &conn_config, cli.mock)?;
@@ -40,7 +53,12 @@ pub fn handle_erase(
         session.erase_all(Some(&callback))
     } else if let Some(ref addr_s) = args.address {
         let addr = parse_address(addr_s)?;
-        let len = args.length.unwrap_or(1024);
+        // Hex here as well as in --address: writing one in hex and the other
+        // in decimal is the sort of inconsistency that produces a wrong erase.
+        let len = match args.length.as_deref() {
+            Some(text) => parse_address(text)?,
+            None => 1024,
+        };
         session.erase_range(addr, len, Some(&callback))
     } else {
         session.erase_all(Some(&callback))
@@ -59,7 +77,7 @@ pub fn handle_erase(
                 format!(
                     "Erase of range 0x{:08X} ({} bytes) completed successfully in {} ms",
                     parse_address(args.address.as_deref().unwrap_or("0"))?,
-                    args.length.unwrap_or(1024),
+                    len_for_message(args)?,
                     duration_ms
                 )
             };
