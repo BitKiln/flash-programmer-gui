@@ -1126,6 +1126,70 @@ pub async fn read_memory(
     .await
 }
 
+/// One erasable unit of the target's flash.
+#[derive(Debug, Clone, Serialize)]
+pub struct SectorDto {
+    pub index: u32,
+    pub address: u32,
+    pub size: u32,
+}
+
+/// The target's flash geometry, sector by sector.
+#[derive(Debug, Clone, Serialize)]
+pub struct FlashMapDto {
+    pub flash_base: u32,
+    pub flash_size: u32,
+    pub sectors: Vec<SectorDto>,
+    /// True when the backend reports no sector list at all, so the map has to
+    /// fall back on `page_size`. Uniform-geometry parts are common; a map that
+    /// silently invented sector boundaries would not be.
+    pub geometry_estimated: bool,
+}
+
+/// Flash geometry of the connected target.
+///
+/// The sector list is the erase granularity, which is what decides how much
+/// of the part an erase actually touches. `target_info` carries only the
+/// count, because the connection panel has no use for 256 boundaries.
+#[tauri::command]
+pub fn flash_map(state: State<'_, AppState>) -> Result<FlashMapDto, String> {
+    let session = state.session.lock().map_err(|e| e.to_string())?;
+    let info = session
+        .as_ref()
+        .and_then(|s| s.target_info())
+        .ok_or_else(|| "No active session. Connect to a probe first.".to_string())?;
+
+    let estimated = info.sectors.is_empty();
+    let sectors = if estimated {
+        // A uniform part: one entry per page, which is the erase unit there.
+        let size = info.page_size.max(1);
+        let count = info.flash_size / size;
+        (0..count)
+            .map(|i| SectorDto {
+                index: i,
+                address: info.flash_base + i * size,
+                size,
+            })
+            .collect()
+    } else {
+        info.sectors
+            .iter()
+            .map(|s| SectorDto {
+                index: s.index,
+                address: s.address,
+                size: s.size,
+            })
+            .collect()
+    };
+
+    Ok(FlashMapDto {
+        flash_base: info.flash_base,
+        flash_size: info.flash_size,
+        sectors,
+        geometry_estimated: estimated,
+    })
+}
+
 /// Largest region a single memory write may carry.
 ///
 /// A direct memory write is for registers and small configuration fields, not

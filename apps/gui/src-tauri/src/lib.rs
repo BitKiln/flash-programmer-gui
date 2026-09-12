@@ -34,6 +34,7 @@ pub fn run() {
             commands::verify_firmware,
             commands::reset_target,
             commands::cancel_operation,
+            commands::flash_map,
             commands::read_memory,
             commands::write_memory,
             commands::can_write_memory,

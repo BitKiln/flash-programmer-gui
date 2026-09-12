@@ -29,6 +29,25 @@ export interface TargetInfo {
   cancellable_stages: string[];
 }
 
+/** One erasable unit of the target's flash. */
+export interface SectorInfo {
+  index: number;
+  address: number;
+  size: number;
+}
+
+/** The target's flash geometry, sector by sector. */
+export interface FlashMapInfo {
+  flash_base: number;
+  flash_size: number;
+  sectors: SectorInfo[];
+  /**
+   * The backend reported no sector list, so the map assumes a uniform
+   * page-sized geometry rather than inventing boundaries.
+   */
+  geometry_estimated: boolean;
+}
+
 // ── Firmware types ───────────────────────────────────────────────────────────
 
 export interface FirmwareInfo {

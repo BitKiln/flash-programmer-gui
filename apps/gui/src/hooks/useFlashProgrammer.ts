@@ -13,6 +13,7 @@ import type {
   ProfileSummary,
   TargetSuggestion,
   MemoryRead,
+  FlashMapInfo,
   BatchOptions,
   BatchReport,
 } from "../types";
@@ -359,6 +360,16 @@ export function useFlashProgrammer() {
     [addLog]
   );
 
+  /// The connected target's flash geometry, sector by sector.
+  const readFlashMap = useCallback(async (): Promise<FlashMapInfo | null> => {
+    try {
+      return await invoke<FlashMapInfo>("flash_map");
+    } catch (err) {
+      addLog("error", `Could not read the flash map: ${err}`);
+      return null;
+    }
+  }, [addLog]);
+
   /// Writes bytes straight onto the target bus: RAM, registers, option bytes.
   ///
   /// Not a flash path. Nothing is erased first, so the backend refuses an
@@ -700,6 +711,7 @@ export function useFlashProgrammer() {
     resetTarget,
     cancelOperation,
     readMemory,
+    readFlashMap,
     writeMemory,
     canWriteMemory,
     readFirmwareWindow,
