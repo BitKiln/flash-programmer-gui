@@ -56,7 +56,7 @@ fn test_devices_text_output() {
     let (code, stdout, stderr) = run_cli_capture(&["--mock", "devices"]);
     assert_eq!(code, EXIT_SUCCESS, "stderr: {}", stderr);
     assert!(
-        stdout.contains("Connected Debug Probes"),
+        stdout.contains("Connected probes and serial ports"),
         "stdout was: {}",
         stdout
     );
@@ -86,7 +86,7 @@ fn test_devices_without_mock_empty() {
     let (code, stdout, _) = run_cli_capture(&["devices"]);
     assert_eq!(code, EXIT_SUCCESS);
     assert!(
-        stdout.contains("No debug probes detected") || stdout.contains("Connected Debug Probes"),
+        stdout.contains("No debug probes detected") || stdout.contains("Connected probes and serial ports"),
         "Output was: {}",
         stdout
     );

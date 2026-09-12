@@ -21,11 +21,11 @@ pub fn handle_devices(
         if probes.is_empty() {
             writeln!(
                 stdout,
-                "No debug probes detected. (Use --mock to view virtual simulated probes)"
+                "No debug probes or ESP serial ports detected. (Use --mock to view virtual simulated probes)"
             )
             .map_err(|e| CliError::InvalidArgsOrProfile(e.to_string()))?;
         } else {
-            writeln!(stdout, "Connected Debug Probes ({} found):", probes.len())
+            writeln!(stdout, "Connected probes and serial ports ({} found):", probes.len())
                 .map_err(|e| CliError::InvalidArgsOrProfile(e.to_string()))?;
             writeln!(stdout, "{}", "-".repeat(60))
                 .map_err(|e| CliError::InvalidArgsOrProfile(e.to_string()))?;
@@ -40,23 +40,33 @@ pub fn handle_devices(
                     writeln!(stdout, "      Serial:      {}", serial)
                         .map_err(|e| CliError::InvalidArgsOrProfile(e.to_string()))?;
                 }
-                let proto_strs: Vec<String> = p
-                    .supported_protocols
-                    .iter()
-                    .map(|proto| format!("{:?}", proto))
-                    .collect();
-                writeln!(
-                    stdout,
-                    "      Protocols:   {}",
-                    proto_strs.join(", ")
-                )
-                .map_err(|e| CliError::InvalidArgsOrProfile(e.to_string()))?;
-                writeln!(
-                    stdout,
-                    "      Speed:       {} kHz (max {} kHz)",
-                    p.default_speed_khz, p.max_speed_khz
-                )
-                .map_err(|e| CliError::InvalidArgsOrProfile(e.to_string()))?;
+                // A serial bootloader has no wire protocol and no debug clock,
+                // so printing "Protocols: " and a kHz figure would be noise at
+                // best and misleading at worst.
+                if p.identifier.starts_with("esp:") {
+                    writeln!(stdout, "      Transport:   serial ROM bootloader")
+                        .map_err(|e| CliError::InvalidArgsOrProfile(e.to_string()))?;
+                    writeln!(
+                        stdout,
+                        "      Baud:        {} (default)",
+                        p.default_speed_khz * 1000
+                    )
+                    .map_err(|e| CliError::InvalidArgsOrProfile(e.to_string()))?;
+                } else {
+                    let proto_strs: Vec<String> = p
+                        .supported_protocols
+                        .iter()
+                        .map(|proto| format!("{:?}", proto))
+                        .collect();
+                    writeln!(stdout, "      Protocols:   {}", proto_strs.join(", "))
+                        .map_err(|e| CliError::InvalidArgsOrProfile(e.to_string()))?;
+                    writeln!(
+                        stdout,
+                        "      Speed:       {} kHz (max {} kHz)",
+                        p.default_speed_khz, p.max_speed_khz
+                    )
+                    .map_err(|e| CliError::InvalidArgsOrProfile(e.to_string()))?;
+                }
             }
             writeln!(stdout, "{}", "-".repeat(60))
                 .map_err(|e| CliError::InvalidArgsOrProfile(e.to_string()))?;

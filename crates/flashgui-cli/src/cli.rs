@@ -113,6 +113,15 @@ pub struct FlashArgs {
     /// Clock frequency in kHz
     #[arg(short, long)]
     pub speed: Option<u32>,
+    /// Serial port of an ESP target in download mode (e.g. COM7, /dev/ttyUSB0).
+    ///
+    /// Shorthand for `--probe esp:<port>`. No debug probe is involved.
+    #[arg(long, conflicts_with = "probe")]
+    pub port: Option<String>,
+
+    /// Baud rate for a serial bootloader connection (default 460800).
+    #[arg(long)]
+    pub baud: Option<u32>,
 
     /// Base address for raw binary files (e.g. 0x08000000)
     #[arg(short = 'a', long)]
@@ -263,6 +272,16 @@ pub struct EraseArgs {
     #[arg(short, long)]
     pub probe: Option<String>,
 
+    /// Serial port of an ESP target in download mode (e.g. COM7, /dev/ttyUSB0).
+    ///
+    /// Shorthand for `--probe esp:<port>`. No debug probe is involved.
+    #[arg(long, conflicts_with = "probe")]
+    pub port: Option<String>,
+
+    /// Baud rate for a serial bootloader connection (default 460800).
+    #[arg(long)]
+    pub baud: Option<u32>,
+
     /// Clock frequency in kHz
     #[arg(short, long, default_value_t = 2000)]
     pub speed: u32,
@@ -297,6 +316,16 @@ pub struct VerifyArgs {
     #[arg(short, long)]
     pub probe: Option<String>,
 
+    /// Serial port of an ESP target in download mode (e.g. COM7, /dev/ttyUSB0).
+    ///
+    /// Shorthand for `--probe esp:<port>`. No debug probe is involved.
+    #[arg(long, conflicts_with = "probe")]
+    pub port: Option<String>,
+
+    /// Baud rate for a serial bootloader connection (default 460800).
+    #[arg(long)]
+    pub baud: Option<u32>,
+
     /// Clock frequency in kHz
     #[arg(short, long, default_value_t = 2000)]
     pub speed: u32,
@@ -319,6 +348,16 @@ pub struct ResetArgs {
     /// Specific probe serial number or ID
     #[arg(short, long)]
     pub probe: Option<String>,
+
+    /// Serial port of an ESP target in download mode (e.g. COM7, /dev/ttyUSB0).
+    ///
+    /// Shorthand for `--probe esp:<port>`. No debug probe is involved.
+    #[arg(long, conflicts_with = "probe")]
+    pub port: Option<String>,
+
+    /// Baud rate for a serial bootloader connection (default 460800).
+    #[arg(long)]
+    pub baud: Option<u32>,
 
     /// Clock frequency in kHz
     #[arg(short, long, default_value_t = 2000)]
