@@ -941,6 +941,38 @@ fn profile_to_dto(profile: &flash_core::FlashProfile) -> ProfileDto {
     }
 }
 
+/// One entry in the target picker.
+#[derive(Debug, Clone, Serialize)]
+pub struct TargetSuggestionDto {
+    /// Part number to put in the target field.
+    pub value: String,
+    /// What the picker shows: part number, family, and vendor.
+    pub label: String,
+    pub vendor: String,
+}
+
+/// Target suggestions for the connection panel, from the device database.
+///
+/// One representative part per family rather than a hand-maintained list, so a
+/// family added to `device-db` shows up here without touching the frontend. The
+/// field stays free text: the probe-rs registry knows far more parts than this.
+#[tauri::command]
+pub fn list_target_suggestions() -> Vec<TargetSuggestionDto> {
+    device_db::FAMILIES
+        .iter()
+        .map(|family| TargetSuggestionDto {
+            value: family.example.to_string(),
+            label: format!(
+                "{} ({}, {})",
+                family.example,
+                family.display,
+                family.vendor.display_name()
+            ),
+            vendor: family.vendor.display_name().to_string(),
+        })
+        .collect()
+}
+
 #[tauri::command]
 pub fn list_profiles() -> Result<Vec<ProfileSummaryDto>, String> {
     flash_core::list_profiles(None)

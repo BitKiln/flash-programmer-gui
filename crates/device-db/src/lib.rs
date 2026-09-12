@@ -189,6 +189,63 @@ pub fn resolve_target_alias(input: &str) -> Option<&'static str> {
     }
 }
 
+/// Renders the support matrix as Markdown.
+///
+/// `docs/supported-devices.md` is this function's output, checked in so it can
+/// be read on the web, and checked by a test so it cannot go stale.
+pub fn render_supported_devices() -> String {
+    let mut out = String::new();
+    out.push_str("# Supported devices
+
+");
+    for line in [
+        "Generated from `crates/device-db`. Do not edit by hand — run",
+        "`cargo run -p device-db --bin gen-supported-devices` instead.",
+        "",
+        "Chip geometry (flash size, sector map, core) is **not** listed here: it comes",
+        "from the probe-rs target registry at runtime, which knows far more parts than",
+        "this table names. A part missing from this list is usually still programmable",
+        "— type its exact name into the target field.",
+        "",
+    ] {
+        out.push_str(line);
+        out.push('\n');
+    }
+    out.push_str("| Vendor | Family | Example part | Backends |
+");
+    out.push_str("|---|---|---|---|
+");
+    for family in FAMILIES {
+        out.push_str(&format!(
+            "| {} | {} | `{}` | {} |
+",
+            family.vendor.display_name(),
+            family.display,
+            family.example,
+            family
+                .backends
+                .iter()
+                .map(|b| format!("`{b}:`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    out.push_str("
+## Backends
+
+");
+    out.push_str("| Scheme | Backend | Reaches |
+|---|---|---|
+");
+    out.push_str(
+        "| `probe:` | probe-rs | ST-Link, CMSIS-DAP/DAPLink, and J-Link probes over SWD or JTAG |
+",
+    );
+    out.push_str("| `mock:` | simulated | Nothing physical — a NOR flash model for tests and demos |
+");
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -221,6 +278,21 @@ mod tests {
                 family.prefix
             );
         }
+    }
+
+    #[test]
+    fn the_checked_in_support_matrix_is_current() {
+        // The document is generated; a stale copy in the repository is a lie
+        // told to anyone reading it on the web.
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../docs/supported-devices.md");
+        let checked_in = std::fs::read_to_string(path)
+            .expect("docs/supported-devices.md is missing")
+            .replace("\r\n", "\n");
+        assert_eq!(
+            checked_in,
+            render_supported_devices(),
+            "docs/supported-devices.md is stale; run `cargo run -p device-db --bin gen-supported-devices`"
+        );
     }
 
     #[test]

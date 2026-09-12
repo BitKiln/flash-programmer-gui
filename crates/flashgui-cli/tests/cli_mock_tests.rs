@@ -454,7 +454,7 @@ fn test_exit_code_5_invalid_arguments() {
 #[test]
 fn test_binary_execution_with_assert_cmd() {
     let mut cmd = Command::cargo_bin("flashgui-cli").unwrap();
-    cmd.args(&["--mock", "devices", "--json"])
+    cmd.args(["--mock", "devices", "--json"])
         .assert()
         .success()
         .stdout(predicate::str::contains("mock:stlink"));
@@ -463,7 +463,7 @@ fn test_binary_execution_with_assert_cmd() {
     let hex_str = hex_file.to_str().unwrap();
     let mut cmd_flash = Command::cargo_bin("flashgui-cli").unwrap();
     cmd_flash
-        .args(&[
+        .args([
             "--mock",
             "flash",
             hex_str,
@@ -480,7 +480,7 @@ fn test_binary_execution_with_assert_cmd() {
     let corrupt_str = corrupt_hex.to_str().unwrap();
     let mut cmd_err = Command::cargo_bin("flashgui-cli").unwrap();
     cmd_err
-        .args(&["--mock", "flash", corrupt_str])
+        .args(["--mock", "flash", corrupt_str])
         .assert()
         .code(3);
 }

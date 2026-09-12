@@ -165,16 +165,18 @@ impl ProgressCallback for CliProgressCallback {
                     if let Ok(json_str) = serde_json::to_string(&msg) {
                         self.write_line(&json_str);
                     }
-                } else if !self.quiet && total_bytes > 0 {
-                    if bytes_transferred == total_bytes || bytes_transferred.is_multiple_of(16384) {
-                        self.write_line(&format!(
-                            "  ... {} / {} bytes ({:.1}%, {:.1} KB/s)",
-                            bytes_transferred,
-                            total_bytes,
-                            percentage,
-                            speed_bps / 1024.0
-                        ));
-                    }
+                } else if !self.quiet
+                    && total_bytes > 0
+                    && (bytes_transferred == total_bytes
+                        || bytes_transferred.is_multiple_of(16384))
+                {
+                    self.write_line(&format!(
+                        "  ... {} / {} bytes ({:.1}%, {:.1} KB/s)",
+                        bytes_transferred,
+                        total_bytes,
+                        percentage,
+                        speed_bps / 1024.0
+                    ));
                 }
             }
             FlashEvent::StageCompleted { stage, duration_ms } => {

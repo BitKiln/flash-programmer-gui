@@ -9,24 +9,25 @@ engine is exposed twice: as a GUI for day-to-day bring-up, and as a headless CLI
 automated firmware testing.
 
 ```
-       ┌───────────────────────┐         ┌─────────────────────────┐
-       │   Flash Programmer    │         │      flashgui-cli       │
-       │   (Tauri v2 + React)  │         │    (Clap 4 headless)    │
-       └──────────┬────────────┘         └────────────┬────────────┘
+       ┌───────────────────────┐         ┌───────────────────────┐
+       │    Flash Programmer   │         │      flashgui-cli     │
+       │   (Tauri v2 + React)  │         │   (Clap 4 headless)   │
+       └──────────┬────────────┘         └────────────┬──────────┘
                   │                                   │
-                  ├─────────────────┬─────────────────┤
-                  ▼                 ▼                 ▼
-       ┌─────────────────────┐  ┌──────────────────────────────────┐
-       │   firmware-parser   │  │            flash-core            │
-       │ (HEX / BIN / ELF)   │  │  (FlashBackend / FlashSession)   │
-       └─────────────────────┘  └────────────────┬─────────────────┘
-                                                 │
-                                 ┌───────────────┴───────────────┐
-                                 ▼                               ▼
-                     ┌───────────────────────┐       ┌───────────────────────┐
-                     │   MockProbeBackend    │       │   ProbeRsLiveBackend  │
-                     │  (NOR flash & faults) │       │  (ST-Link, DAPLink…)  │
-                     └───────────────────────┘       └───────────────────────┘
+                  └─────────────────┬─────────────────┘
+                                    ▼
+       ┌───────────────────────┐  ┌───────────────────────────────┐
+       │    firmware-parser    │  │           flash-core          │
+       │   (HEX / BIN / ELF)   │  │   traits · registry · batch   │
+       └───────────────────────┘  └────────────────┬──────────────┘
+                                                   │  BackendRegistry routes on
+                                   ┌───────────────┴───────────┐  the identifier scheme
+                                   ▼                           ▼
+                        ┌───────────────────────┐   ┌───────────────────────┐
+                        │   backends/probe-rs   │   │     backends/mock     │
+                        │    probe:  ST-Link,   │   │    mock:  NOR flash   │
+                        │    DAPLink, J-Link    │   │     model · faults    │
+                        └───────────────────────┘   └───────────────────────┘
 ```
 
 ## What it does
@@ -46,6 +47,13 @@ automated firmware testing.
 - **Mock backend** — a simulated NOR flash with real physics (erased `0xFF`, writes only clear
   bits), STM32 sector geometry, and deterministic fault injection, so the whole tool can be tested
   in CI with no hardware attached.
+
+## Documentation
+
+- [Architecture](docs/architecture.md) — crates, how a backend is chosen, the flash data flow.
+- [Writing a backend](docs/backend-api.md) — the two traits and the contracts that are easy
+  to get wrong.
+- [Supported devices](docs/supported-devices.md) — generated from the device database.
 
 ## Requirements
 
@@ -222,7 +230,9 @@ Set `FLASHGUI_HW_PROBE` as well when more than one probe is attached.
 | Component | State |
 |---|---|
 | `firmware-parser` — HEX, BIN, ELF | Done |
-| `flash-core` — traits, probe-rs backend, mock backend, fault injection | Done |
+| `flash-core` — traits, backend registry, orchestration, batch runner | Done |
+| `backends/probe-rs`, `backends/mock` — separate crates behind the registry | Done |
+| `device-db` — target aliases, family/backend matrix, generated support matrix | Done |
 | `flashgui-cli` — devices, flash, batch, erase, verify, reset, profiles | Done |
 | E2E suite — Tiers 1-4 (mock) and Tier 5 (hardware) | Done |
 | Desktop GUI — connection, firmware, controls, progress, console | Done |
@@ -231,6 +241,9 @@ Set `FLASHGUI_HW_PROBE` as well when more than one probe is attached.
 | Batch / production mode — `flash-core` runner and `batch` CLI command | Done |
 | Batch mode in the desktop application — Batch tab, live unit table, log file | Done |
 | Serial-number programming — CLI flags, batch integration, desktop Batch tab | Done |
+| Silicon Labs EFR32/EFM32 — through probe-rs and J-Link | Untested on hardware |
+| ESP32 over the serial ROM bootloader | Planned (v0.3) |
+| OpenOCD backend | Planned (v0.5) |
 
 ## Licence
 
