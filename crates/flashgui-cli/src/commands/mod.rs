@@ -13,13 +13,9 @@ use std::sync::{Arc, Mutex};
 use crate::cli::{parse_address, Cli, FlashArgs, Protocol};
 use crate::exit_codes::CliError;
 use flash_core::error::FlashError;
-use flash_core::mock::{FaultInjector, MockFlashMemory, MockFlashSession};
+use flash_backend_mock::{FaultInjector, MockFlashMemory, MockFlashSession};
 use flash_core::traits::{FlashBackend, FlashSession};
 use flash_core::types::ConnectionConfig;
-use flash_core::MockProbeBackend;
-
-#[cfg(feature = "live-probe")]
-use flash_core::ProbeRsLiveBackend;
 
 /// Flash parameters after the CLI-over-profile-over-default hierarchy has been
 /// applied. `flash` and `batch` accept the same flags, so they resolve them the
@@ -158,20 +154,17 @@ pub fn resolve_flash_params(cli: &Cli, args: &FlashArgs) -> Result<ResolvedFlash
     })
 }
 
-/// Returns the appropriate probe backend based on the `--mock` CLI flag.
+/// The backend registry this invocation should use.
+///
+/// `--mock` narrows the registry to the simulated backend so that a run with no
+/// hardware attached cannot accidentally reach a probe that happens to be
+/// plugged in. Without it, every compiled-in backend is available and the probe
+/// identifier's scheme decides which one serves the request.
 pub fn get_backend(mock: bool) -> Box<dyn FlashBackend> {
     if mock {
-        Box::new(MockProbeBackend::new())
+        Box::new(flash_backends::mock_registry())
     } else {
-        #[cfg(feature = "live-probe")]
-        {
-            Box::new(ProbeRsLiveBackend::new())
-        }
-        #[cfg(not(feature = "live-probe"))]
-        {
-            // Fallback when live-probe is not compiled: empty live backend simulator
-            Box::new(MockProbeBackend::with_probes(Vec::new()))
-        }
+        Box::new(flash_backends::default_registry())
     }
 }
 
@@ -190,7 +183,7 @@ pub fn is_supported_target(target: &str, mock: bool) -> bool {
             || normalized.contains("cortex")
             || normalized.contains("generic")
     } else {
-        true
+        device_db::backend_supports(device_db::scheme::PROBE_RS, target)
     }
 }
 

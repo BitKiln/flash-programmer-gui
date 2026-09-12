@@ -7,10 +7,10 @@ use probe_rs::probe::Probe;
 use probe_rs::probe::WireProtocol as RsWireProtocol;
 use probe_rs::{MemoryInterface, Permissions, Session};
 
-use crate::error::FlashError;
-use crate::progress::{FlashEvent, FlashStage, ProgressCallback, ProgressMetrics};
-use crate::traits::{FlashBackend, FlashSession};
-use crate::types::{
+use flash_core::error::FlashError;
+use flash_core::progress::{FlashEvent, FlashStage, ProgressCallback, ProgressMetrics};
+use flash_core::traits::{FlashBackend, FlashSession};
+use flash_core::types::{
     ConnectionConfig, ProbeInfo, ProbeType, ProgramOptions, TargetInfo, VerifyMismatch,
     VerifyReport, WireProtocol,
 };
@@ -130,6 +130,10 @@ impl FlashBackend for ProbeRsLiveBackend {
         "probe-rs"
     }
 
+    fn scheme(&self) -> &'static str {
+        "probe"
+    }
+
     fn list_probes(&self) -> Result<Vec<ProbeInfo>, FlashError> {
         let lister = Lister::new();
         let probes = lister.list_all();
@@ -195,7 +199,7 @@ impl FlashBackend for ProbeRsLiveBackend {
                 Err(e) => {
                     // Fall back to reading the chip's own ID registers and
                     // resolving the result through the target registry.
-                    let detected = crate::live::detect::detect(&matched, config);
+                    let detected = crate::detect::detect(&matched, config);
 
                     let selector = match (&detected.chip, detected.core) {
                         (Some(chip), _) => probe_rs::config::TargetSelector::from(chip.as_str()),
@@ -241,7 +245,7 @@ impl FlashBackend for ProbeRsLiveBackend {
             match first {
                 Ok(s) => s,
                 Err(first_err) => {
-                    let alias = crate::mock::profiles::resolve_target_alias(raw);
+                    let alias = device_db::resolve_target_alias(raw);
                     let retry = match alias {
                         Some(canonical) if !canonical.eq_ignore_ascii_case(raw) => {
                             let probe = open_probe_internal(&matched, config)?;
@@ -258,7 +262,7 @@ impl FlashBackend for ProbeRsLiveBackend {
                     match retry {
                         Some(s) => s,
                         None => {
-                            let near = crate::live::detect::suggestions(raw);
+                            let near = crate::detect::suggestions(raw);
                             let hint = if near.is_empty() {
                                 String::new()
                             } else {
@@ -277,7 +281,7 @@ impl FlashBackend for ProbeRsLiveBackend {
         // program time, so reject it here while the failure is still explainable.
         let mut session = session;
         if !is_auto {
-            if let Some(reason) = crate::live::detect::target_mismatch(&mut session, &config.target_name)
+            if let Some(reason) = crate::detect::target_mismatch(&mut session, &config.target_name)
             {
                 return Err(FlashError::ConnectError(reason));
             }
@@ -435,7 +439,7 @@ fn expand_sectors(
     props: &probe_rs::config::FlashProperties,
     flash_base: u64,
     flash_size: u64,
-) -> Vec<crate::types::SectorInfo> {
+) -> Vec<flash_core::types::SectorInfo> {
     let mut out = Vec::new();
     let descriptions = &props.sectors;
     if descriptions.is_empty() || flash_size == 0 {
@@ -458,7 +462,7 @@ fn expand_sectors(
 
         let mut addr = start;
         while addr < end {
-            out.push(crate::types::SectorInfo {
+            out.push(flash_core::types::SectorInfo {
                 index,
                 address: addr as u32,
                 size: desc.size as u32,

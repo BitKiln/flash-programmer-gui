@@ -3,13 +3,8 @@ name = "flash-core"
 version = "0.1.0"
 edition = "2021"
 authors = ["Flash Programmer GUI Team"]
-description = "Modular flash programming core and probe abstraction layer for embedded targets"
+description = "Modular flash programming core: backend traits, registry, orchestration, batch runner, and profiles"
 license = "MIT OR Apache-2.0"
-
-[features]
-default = ["mock-probe", "live-probe"]
-mock-probe = []
-live-probe = ["dep:probe-rs"]
 
 [dependencies]
 thiserror = "1.0"
@@ -19,9 +14,5 @@ crc32fast = "1.4"
 toml = "0.8"
 directories = "5.0"
 firmware-parser = { path = "../firmware-parser" }
-probe-rs = { version = "0.32", optional = true }
 
 [dev-dependencies]
-
-[target."cfg(windows)".dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem", "Win32_Foundation"] }

@@ -20,10 +20,12 @@ tauri-plugin-shell = "2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 firmware-parser = { path = "../../../crates/firmware-parser" }
-flash-core = { path = "../../../crates/flash-core", features = ["mock-probe", "live-probe"] }
+flash-core = { path = "../../../crates/flash-core" }
+flash-backends = { path = "../../../crates/flash-backends", default-features = false, features = ["mock-probe"] }
+device-db = { path = "../../../crates/device-db" }
 tauri-plugin-single-instance = "2"
 
 [features]
 default = ["custom-protocol", "live-probe"]
 custom-protocol = ["tauri/custom-protocol"]
-live-probe = ["flash-core/live-probe"]
+live-probe = ["flash-backends/live-probe"]

@@ -226,6 +226,13 @@ export interface Profile {
   full_chip_erase: boolean;
 }
 
+/** One entry in the target picker, from the device database. */
+export interface TargetSuggestion {
+  value: string;
+  label: string;
+  vendor: string;
+}
+
 export interface ProfileSummary {
   name: string;
   description: string | null;

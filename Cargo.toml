@@ -3,6 +3,10 @@ resolver = "2"
 members = [
     "crates/firmware-parser",
     "crates/flash-core",
+    "crates/device-db",
+    "crates/backends/mock",
+    "crates/backends/probe-rs",
+    "crates/flash-backends",
     "crates/flashgui-cli",
     "crates/e2e-tests",
     "apps/gui/src-tauri",

@@ -6,7 +6,7 @@ use flash_core::traits::FlashBackend;
 use flash_core::types::{ConnectionConfig, WireProtocol};
 
 fn main() {
-    let backend = flash_core::live::ProbeRsLiveBackend::new();
+    let backend = flash_backend_probe_rs::ProbeRsLiveBackend::new();
     let config = ConnectionConfig {
         probe_id: None,
         target_name: "auto".to_string(),
@@ -14,6 +14,7 @@ fn main() {
         speed_khz: 4000,
         connect_under_reset: false,
         reset_type: None,
+        transport: Default::default(),
     };
 
     let mut session = backend.open_session(&config).expect("open session");

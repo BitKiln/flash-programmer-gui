@@ -5,7 +5,7 @@ use flash_core::traits::FlashBackend;
 use flash_core::types::{ConnectionConfig, WireProtocol};
 
 fn main() {
-    let backend = flash_core::live::ProbeRsLiveBackend::new();
+    let backend = flash_backend_probe_rs::ProbeRsLiveBackend::new();
 
     for probe in backend.list_probes().expect("listing probes") {
         println!("probe: {} ({})", probe.identifier, probe.product_name);
@@ -18,6 +18,7 @@ fn main() {
         speed_khz: 4000,
         connect_under_reset: false,
         reset_type: None,
+        transport: Default::default(),
     };
 
     match backend.open_session(&config) {

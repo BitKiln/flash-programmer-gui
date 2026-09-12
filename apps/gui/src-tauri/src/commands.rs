@@ -8,7 +8,8 @@ use flash_core::batch::{
 };
 use flash_core::serial::{program_serial, SerialAllocator, SerialConfig, SerialEncoding};
 use flash_core::{
-    ConnectionConfig, FlashEvent, FlashManager, FlashStage, LogLevel, ProgramOptions, WireProtocol,
+    ConnectionConfig, FlashEvent, FlashManager, FlashStage, LogLevel, ProgramOptions, Transport,
+    WireProtocol,
 };
 
 use crate::state::AppState;
@@ -422,6 +423,7 @@ pub async fn connect_probe(
             speed_khz: speed,
             connect_under_reset: false,
             reset_type: None,
+            transport: Transport::DebugProbe,
         };
 
         let session = {
@@ -459,6 +461,7 @@ pub async fn auto_detect_target(
             speed_khz: speed,
             connect_under_reset: false,
             reset_type: None,
+            transport: Transport::DebugProbe,
         };
 
         let session = {
@@ -805,6 +808,7 @@ pub async fn start_batch(
                 speed_khz: speed,
                 connect_under_reset: false,
                 reset_type: None,
+                transport: Transport::DebugProbe,
             },
             options: ProgramOptions {
                 verify_after: verify,
@@ -935,6 +939,38 @@ fn profile_to_dto(profile: &flash_core::FlashProfile) -> ProfileDto {
         reset: profile.reset_after(),
         full_chip_erase: profile.full_chip_erase(),
     }
+}
+
+/// One entry in the target picker.
+#[derive(Debug, Clone, Serialize)]
+pub struct TargetSuggestionDto {
+    /// Part number to put in the target field.
+    pub value: String,
+    /// What the picker shows: part number, family, and vendor.
+    pub label: String,
+    pub vendor: String,
+}
+
+/// Target suggestions for the connection panel, from the device database.
+///
+/// One representative part per family rather than a hand-maintained list, so a
+/// family added to `device-db` shows up here without touching the frontend. The
+/// field stays free text: the probe-rs registry knows far more parts than this.
+#[tauri::command]
+pub fn list_target_suggestions() -> Vec<TargetSuggestionDto> {
+    device_db::FAMILIES
+        .iter()
+        .map(|family| TargetSuggestionDto {
+            value: family.example.to_string(),
+            label: format!(
+                "{} ({}, {})",
+                family.example,
+                family.display,
+                family.vendor.display_name()
+            ),
+            vendor: family.vendor.display_name().to_string(),
+        })
+        .collect()
 }
 
 #[tauri::command]

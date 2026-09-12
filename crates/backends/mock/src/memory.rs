@@ -1,5 +1,5 @@
-use crate::error::FlashError;
-use crate::types::{SectorInfo, TargetInfo};
+use flash_core::error::FlashError;
+use flash_core::types::{SectorInfo, TargetInfo};
 
 /// Simulated physical NOR flash memory with bit-clearing physics and sector layouts.
 #[derive(Debug, Clone)]

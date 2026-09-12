@@ -1,0 +1,17 @@
+[package]
+name = "flash-backends"
+version = "0.1.0"
+edition = "2021"
+authors = ["Flash Programmer GUI Team"]
+description = "Aggregates the compiled-in flash backends into a ready-to-use registry"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+flash-core = { path = "../flash-core" }
+flash-backend-mock = { path = "../backends/mock", optional = true }
+flash-backend-probe-rs = { path = "../backends/probe-rs", optional = true }
+
+[features]
+default = ["mock-probe", "live-probe"]
+mock-probe = ["dep:flash-backend-mock"]
+live-probe = ["dep:flash-backend-probe-rs"]

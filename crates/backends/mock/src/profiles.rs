@@ -1,4 +1,4 @@
-use crate::types::{SectorInfo, TargetInfo};
+use flash_core::types::{SectorInfo, TargetInfo};
 
 /// Returns target geometry for STM32F103C8 (Medium-density, 64 KB flash, 1 KB uniform sectors).
 pub fn stm32f103c8() -> TargetInfo {
@@ -150,49 +150,6 @@ pub fn generic_cortex_m() -> TargetInfo {
         ram_size: 128 * 1024,
         page_size: 1024,
         sectors,
-    }
-}
-
-/// Normalizes and resolves board or alias names into canonical probe-rs target chip names.
-pub fn resolve_target_alias(input: &str) -> Option<&'static str> {
-    let clean = input.trim().to_lowercase().replace(['-', '_'], "");
-    match clean.as_str() {
-        "nucleoh753zi" | "nucleoh753" | "stm32h753zi" | "stm32h753" | "h753zi" | "h753" => {
-            Some("STM32H753ZI")
-        }
-        "nucleoh743zi" | "nucleoh743" | "stm32h743zi" | "stm32h743" | "h743zi" | "h743" => {
-            Some("STM32H743ZI")
-        }
-        "stm32h750vbtx" | "stm32h750" | "h750" => Some("STM32H750VBTx"),
-        "nucleof401re" | "nucleof401" | "stm32f401re" | "stm32f401" | "f401re" | "f401" => {
-            Some("STM32F401RE")
-        }
-        "nucleof411re" | "nucleof411" | "stm32f411re" | "stm32f411" | "f411re" | "f411" => {
-            Some("STM32F411RE")
-        }
-        "nucleof446re" | "nucleof446" | "stm32f446re" | "stm32f446" | "f446re" | "f446" => {
-            Some("STM32F446RE")
-        }
-        "nucleof429zi" | "nucleof429" | "stm32f429zi" | "stm32f429" | "f429zi" | "f429" => {
-            Some("STM32F429ZI")
-        }
-        "stm32f407vg" | "stm32f407" | "discoveryf407" | "f407vg" | "f407" => Some("STM32F407VG"),
-        "nucleof103rb" | "nucleof103" | "stm32f103rb" | "stm32f103" | "bluepill"
-        | "stm32f103c8" | "f103c8" => Some("STM32F103C8"),
-        "nucleog071rb" | "stm32g071rb" | "stm32g0" => Some("STM32G071RB"),
-        "nucleog474re" | "stm32g474re" | "stm32g4" => Some("STM32G474RE"),
-        "nucleol476rg" | "stm32l476rg" | "stm32l4" => Some("STM32L476RG"),
-        "nucleou575zi" | "nucleou575ziq" | "stm32u575zi" | "stm32u575" | "u575zi" | "u575" => {
-            Some("STM32U575ZITx")
-        }
-        "nucleou585zi" | "stm32u585ai" | "stm32u585" | "u585" => Some("STM32U585AIIx"),
-        "nucleoh563zi" | "stm32h563zi" | "stm32h563" | "h563zi" | "h563" => Some("STM32H563ZITx"),
-        "nucleol552ze" | "stm32l552ze" | "stm32l552" | "l552" => Some("STM32L552ZETx"),
-        "nucleowb55rg" | "stm32wb55rg" | "stm32wb55" | "wb55" => Some("STM32WB55RGVx"),
-        "nucleowl55jc" | "stm32wl55jc" | "stm32wl55" | "wl55" => Some("STM32WL55JCIx"),
-        "stm32c031c6" | "stm32c031" | "c031" => Some("STM32C031C6Tx"),
-        "rp2040" | "pico" | "picow" | "raspberrypipico" => Some("RP2040"),
-        _ => None,
     }
 }
 

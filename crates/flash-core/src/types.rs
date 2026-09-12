@@ -8,6 +8,30 @@ pub enum WireProtocol {
     Jtag,
 }
 
+/// How the host reaches the target.
+///
+/// The debug-probe fields on [`ConnectionConfig`] (`protocol`, `speed_khz`,
+/// `connect_under_reset`, `reset_type`) are meaningful only under
+/// [`Transport::DebugProbe`]; other transports carry their parameters here.
+/// The flat fields stay for now so saved profiles and the desktop IPC contract
+/// keep working — see `docs/backend-api.md`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Transport {
+    /// SWD or JTAG through a debug probe.
+    #[default]
+    DebugProbe,
+    /// A serial or USB ROM bootloader, such as the ESP32's.
+    Serial {
+        baud: u32,
+        /// Whether the adapter can drive the target's reset and boot straps
+        /// (DTR/RTS). False means the user resets the board by hand.
+        controls_reset: bool,
+    },
+    /// A remote programming server, such as OpenOCD's TCL port.
+    Rpc { endpoint: String },
+}
+
 /// Category/family of debug probe hardware or virtual simulator.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -120,6 +144,10 @@ pub struct ConnectionConfig {
     pub speed_khz: u32,
     pub connect_under_reset: bool,
     pub reset_type: Option<ResetType>,
+    /// How to reach the target. Defaults to [`Transport::DebugProbe`], so
+    /// configurations written before transports existed deserialise unchanged.
+    #[serde(default)]
+    pub transport: Transport,
 }
 
 impl Default for ConnectionConfig {
@@ -131,8 +159,44 @@ impl Default for ConnectionConfig {
             speed_khz: 4000,
             connect_under_reset: false,
             reset_type: Some(ResetType::Software),
+            transport: Transport::DebugProbe,
         }
     }
+}
+
+impl ConnectionConfig {
+    /// Connection over a serial or USB ROM bootloader.
+    pub fn serial(port: impl Into<String>, baud: u32, target_name: impl Into<String>) -> Self {
+        Self {
+            probe_id: Some(port.into()),
+            target_name: target_name.into(),
+            transport: Transport::Serial {
+                baud,
+                controls_reset: true,
+            },
+            ..Default::default()
+        }
+    }
+
+    /// The debug-probe wire parameters, or `None` when this connection does not
+    /// go through a debug probe.
+    pub fn debug_params(&self) -> Option<DebugProbeParams> {
+        matches!(self.transport, Transport::DebugProbe).then(|| DebugProbeParams {
+            protocol: self.protocol,
+            speed_khz: self.speed_khz,
+            connect_under_reset: self.connect_under_reset,
+            reset_type: self.reset_type,
+        })
+    }
+}
+
+/// The wire parameters that only mean something to a debug probe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DebugProbeParams {
+    pub protocol: WireProtocol,
+    pub speed_khz: u32,
+    pub connect_under_reset: bool,
+    pub reset_type: Option<ResetType>,
 }
 
 /// Options controlling erase, programming, and verification execution.
