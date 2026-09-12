@@ -33,10 +33,20 @@ const SYNC_BAUD: u32 = 115_200;
 /// A board that has just been reset into its application does not always catch
 /// the first auto-reset sequence, so a single attempt reports a healthy board
 /// as absent. esptool retries for the same reason.
-const SYNC_ATTEMPTS: usize = 4;
+///
+/// Reconnecting after a write is the hard case: the chip has rebooted into the
+/// firmware that was just programmed, and an application driving the UART is
+/// harder to interrupt than the boot loop of an empty part. That path was
+/// reliable while flash was blank and began failing as soon as a working image
+/// was on it, so the budget is generous.
+const SYNC_ATTEMPTS: usize = 8;
 
-/// Settling time between attempts, enough for a reset to finish.
+/// Settling time before the first retry. Each further attempt waits longer, up
+/// to `MAX_SYNC_RETRY_DELAY`, rather than hammering a port that needs a moment.
 const SYNC_RETRY_DELAY: Duration = Duration::from_millis(250);
+
+/// Ceiling on the backoff, so a failure still reports in a few seconds.
+const MAX_SYNC_RETRY_DELAY: Duration = Duration::from_millis(1_500);
 
 pub struct EspflashLink {
     /// `None` only between dropping a connection and making the next one.
@@ -90,7 +100,10 @@ impl EspflashLink {
         let mut last = None;
         for attempt in 0..SYNC_ATTEMPTS {
             if attempt > 0 {
-                std::thread::sleep(SYNC_RETRY_DELAY);
+                let backoff = SYNC_RETRY_DELAY
+                    .saturating_mul(attempt as u32)
+                    .min(MAX_SYNC_RETRY_DELAY);
+                std::thread::sleep(backoff);
             }
             match Self::open_once(config) {
                 Ok(link) => return Ok(link),
