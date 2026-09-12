@@ -9,6 +9,9 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
+  # Match the toolchain the project is developed against; npm 10 on Node 20
+  # resolves this lockfile differently and `npm ci` refuses it.
+  NODE_VERSION: 22
 
 jobs:
   rust:
@@ -43,6 +46,21 @@ jobs:
             libssl-dev \
             patchelf
 
+      # `tauri::generate_context!` reads `frontendDist` at compile time and
+      # panics if `apps/gui/dist` is missing, so the frontend has to be built
+      # before the workspace will compile at all.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: apps/gui/package-lock.json
+
+      - name: Build the frontend
+        working-directory: apps/gui
+        run: |
+          npm ci
+          npm run build
+
       - name: Build
         run: cargo build --workspace --all-targets
 
@@ -51,11 +69,6 @@ jobs:
 
       - name: Clippy
         run: cargo clippy --workspace --all-targets
-
-      # The hardware tier is #[ignore]d and needs a board on the bench; this
-      # only proves the tests still compile.
-      - name: Check the hardware tier compiles
-        run: cargo test --workspace --no-run
 
   frontend:
     name: Frontend
@@ -69,7 +82,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
           cache-dependency-path: apps/gui/package-lock.json
 
