@@ -157,6 +157,29 @@ impl TclLink for TcpTcl {
     }
 }
 
+/// How long to wait when checking whether anything is listening.
+///
+/// Short: this runs during a probe scan, and a scan that stalls makes the
+/// application look hung. A local OpenOCD answers a connect immediately.
+pub const LISTEN_CHECK_TIMEOUT: Duration = Duration::from_millis(150);
+
+/// Whether something accepts a connection on `endpoint` right now.
+///
+/// Used to decide whether to list the endpoint as available. It says only
+/// that a socket answered -- not that it is OpenOCD, and not that an adapter
+/// is attached to it -- which is the same standard the other transports list
+/// by: a serial port is listed because it exists, not because a board is on
+/// the other end.
+pub fn is_listening(endpoint: &str) -> bool {
+    let (host, port) = split_endpoint(endpoint);
+    let Ok(addresses) = format!("{host}:{port}").to_socket_addrs() else {
+        return false;
+    };
+    addresses
+        .take(2)
+        .any(|address| TcpStream::connect_timeout(&address, LISTEN_CHECK_TIMEOUT).is_ok())
+}
+
 /// Splits `host:port`, a bare host, or a bare port into both halves.
 ///
 /// A bare number is a port on localhost, because that is what someone writing
@@ -244,6 +267,27 @@ mod tests {
             split_endpoint("localhost:not-a-port"),
             ("localhost".to_string(), DEFAULT_PORT)
         );
+    }
+
+    #[test]
+    fn a_listening_socket_is_seen_and_a_free_port_is_not() {
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let taken = listener.local_addr().unwrap().port();
+        assert!(is_listening(&format!("127.0.0.1:{taken}")));
+
+        let free = {
+            let temporary = TcpListener::bind("127.0.0.1:0").unwrap();
+            temporary.local_addr().unwrap().port()
+        };
+        assert!(!is_listening(&format!("127.0.0.1:{free}")));
+    }
+
+    #[test]
+    fn an_unresolvable_host_is_not_listening_rather_than_an_error() {
+        // A probe scan must not fail because one endpoint cannot be resolved.
+        assert!(!is_listening("no-such-host.invalid:6666"));
     }
 
     #[test]

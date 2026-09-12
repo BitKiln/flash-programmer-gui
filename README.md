@@ -269,7 +269,9 @@ flashgui-cli erase --openocd 6666 --address 0x08000000 --length 0x4000
 ```
 
 `--openocd <endpoint>` is shorthand for `--probe openocd:<endpoint>`; a bare
-number is a port on localhost. The desktop application has an **OpenOCD** mode
+number is a port on localhost. `devices` lists the default endpoint only when
+something is listening on it, so an OpenOCD that is not running does not appear
+as though it were a probe -- naming the endpoint reaches it either way. The desktop application has an **OpenOCD** mode
 where the endpoint is typed rather than chosen from a list, because nothing can
 enumerate OpenOCD processes.
 

@@ -95,17 +95,29 @@ impl FlashBackend for OpenOcdBackend {
         "openocd"
     }
 
-    /// Advertises the default endpoint without connecting to it.
+    /// Lists the default endpoint only when something is listening on it.
     ///
-    /// Probing the port here would be a lie in either direction: OpenOCD can be
-    /// started a second after this list is drawn, and a port that answers is
-    /// not proof that the adapter behind it is attached. The entry says where
-    /// this backend would look, and connecting is what finds out.
+    /// Listing it unconditionally was worse than the alternative: every caller
+    /// that groups probes by scheme showed a phantom entry, and a UI that
+    /// auto-selects the first one would put it ahead of an attached debug
+    /// probe. A socket that answers is not proof that OpenOCD is behind it or
+    /// that an adapter is attached to it, but it is the same standard the other
+    /// transports list by -- a serial port is listed because it exists, not
+    /// because a board is on the other end.
+    ///
+    /// An endpoint that is not listening is still reachable by naming it:
+    /// `--openocd <endpoint>`, or the desktop app's OpenOCD mode, neither of
+    /// which goes through this list. OpenOCD started a moment from now appears
+    /// on the next scan.
     fn list_probes(&self) -> Result<Vec<ProbeInfo>, FlashError> {
-        Ok(match &self.advertised {
-            Some(entries) => entries.clone(),
-            None => vec![probe_info_for(&format!("127.0.0.1:{DEFAULT_PORT}"), false)],
-        })
+        if let Some(entries) = &self.advertised {
+            return Ok(entries.clone());
+        }
+        let endpoint = format!("127.0.0.1:{DEFAULT_PORT}");
+        if tcl::is_listening(&endpoint) {
+            return Ok(vec![probe_info_for(&endpoint, false)]);
+        }
+        Ok(Vec::new())
     }
 
     fn open_session(&self, config: &ConnectionConfig) -> Result<Box<dyn FlashSession>, FlashError> {
@@ -169,6 +181,44 @@ mod tests {
         let backend = OpenOcdBackend::simulated();
         let probes = backend.list_probes().unwrap();
         assert!(probes.iter().all(|p| p.identifier.starts_with("openocd:")));
+    }
+
+    #[test]
+    fn nothing_is_listed_when_nothing_is_listening() {
+        // The phantom entry this avoids was worse than the absence: grouped by
+        // scheme it looked like an attached probe, and an auto-selecting UI
+        // preferred it to a real one.
+        let backend = OpenOcdBackend::new();
+        let probes = backend.list_probes().expect("a scan never fails");
+        for probe in &probes {
+            assert!(
+                probe.identifier.starts_with("openocd:"),
+                "anything listed must route back here: {}",
+                probe.identifier
+            );
+        }
+    }
+
+    #[test]
+    fn a_listening_endpoint_is_listed() {
+        use std::net::TcpListener;
+
+        // Bind the default TCL port if it is free, so the listing has
+        // something to find. If it is already taken -- by an actual OpenOCD, or
+        // by anything else -- the listing should find that instead, and either
+        // way the assertion below holds.
+        let _listener = TcpListener::bind(format!("127.0.0.1:{DEFAULT_PORT}")).ok();
+        let backend = OpenOcdBackend::new();
+        let probes = backend.list_probes().unwrap();
+        assert_eq!(
+            probes.len(),
+            1,
+            "something is listening on {DEFAULT_PORT}, so the endpoint belongs in the list"
+        );
+        assert_eq!(
+            probes[0].identifier,
+            format!("openocd:127.0.0.1:{DEFAULT_PORT}")
+        );
     }
 
     #[test]

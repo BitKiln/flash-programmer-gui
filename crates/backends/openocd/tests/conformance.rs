@@ -55,17 +55,27 @@ fn openocd_backend_conforms() {
 }
 
 #[test]
-fn the_listed_endpoint_routes_back_to_this_backend() {
+fn only_a_listening_endpoint_is_listed() {
+    // Listing the endpoint unconditionally showed a phantom probe: grouped by
+    // scheme it looked like attached hardware, and a UI that auto-selects the
+    // first entry preferred it to a real debug probe. An endpoint nothing
+    // answers on is still reachable by naming it.
     let backend = OpenOcdBackend::new();
-    let probes = backend
-        .list_probes()
-        .expect("listing an endpoint never needs a connection");
-    assert!(
-        !probes.is_empty(),
-        "the default endpoint is always worth offering: OpenOCD may be started \
-         a second after this list is drawn"
-    );
+    let probes = backend.list_probes().expect("a scan never fails");
     assert!(probes.iter().all(|p| p.identifier.starts_with("openocd:")));
+
+    // The listing only looks at the default port, so an endpoint given by hand
+    // is what reaches any other one -- and it does not need the list at all.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let config = ConnectionConfig {
+        probe_id: Some(format!("openocd:127.0.0.1:{port}")),
+        ..Default::default()
+    };
+    assert_eq!(
+        flash_backend_openocd::endpoint_for(&config),
+        format!("127.0.0.1:{port}")
+    );
 }
 
 #[test]
