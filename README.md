@@ -128,6 +128,21 @@ Command-line flags still override the profile. Profiles are TOML files resolved 
 `./.flashgui/profiles/` first, then your user config directory; `--profile-file <path>` points at
 one directly.
 
+### Batch (production) mode
+
+Program a run of boards without restarting the tool. `batch` takes every flag `flash` takes, plus
+the run controls:
+
+```bash
+flashgui-cli batch build/app.elf --profile sensor-board --count 50 --log run.csv
+```
+
+Between boards the runner waits for the programmed board to be unplugged and the next one to
+appear. On a fixture that swaps boards under software control, `--rearm immediate` skips that wait.
+Failures are logged and the run continues; `--stop-on-error` ends it at the first failure instead.
+`--log` writes one CSV row per board (index, pass/fail, target, bytes, duration, message), or JSON
+with `--log-json`. The exit code is 1 if any board failed.
+
 ### CI and scripting
 
 `--json` turns every status, progress, and completion message into NDJSON on stdout, and the exit
@@ -176,12 +191,14 @@ Set `FLASHGUI_HW_PROBE` as well when more than one probe is attached.
 |---|---|
 | `firmware-parser` — HEX, BIN, ELF | Done |
 | `flash-core` — traits, probe-rs backend, mock backend, fault injection | Done |
-| `flashgui-cli` — devices, flash, erase, verify, reset, profiles | Done |
+| `flashgui-cli` — devices, flash, batch, erase, verify, reset, profiles | Done |
 | E2E suite — Tiers 1-4 (mock) and Tier 5 (hardware) | Done |
 | Desktop GUI — connection, firmware, controls, progress, console | Done |
 | Cancellation, pushed telemetry, segment inspector, GUI profiles | Done |
 | Memory viewer — hex view, firmware comparison, save region | Done |
-| Batch / production mode, serial-number programming | Planned |
+| Batch / production mode — `flash-core` runner and `batch` CLI command | Done |
+| Batch mode in the desktop application | Planned |
+| Serial-number programming | Planned |
 
 ## Licence
 

@@ -484,3 +484,106 @@ fn test_binary_execution_with_assert_cmd() {
         .assert()
         .code(3);
 }
+
+#[test]
+fn test_batch_programs_requested_number_of_units() {
+    let _guard = lock_mock_flash();
+    let hex_file = fixture_path("tests/fixtures/valid_stm32_single_segment.hex");
+    let (code, stdout, stderr) = run_cli_capture(&[
+        "--mock",
+        "batch",
+        hex_file.to_str().unwrap(),
+        "--target",
+        "STM32F401RE",
+        "--count",
+        "3",
+        "--rearm",
+        "immediate",
+    ]);
+
+    assert_eq!(code, EXIT_SUCCESS, "stderr: {}", stderr);
+    assert_eq!(
+        stdout.matches("PASS").count(),
+        3,
+        "expected three passing units, stdout: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("3 unit(s): 3 passed, 0 failed"),
+        "missing batch summary, stdout: {}",
+        stdout
+    );
+}
+
+#[test]
+fn test_batch_writes_csv_log() {
+    let _guard = lock_mock_flash();
+    let hex_file = fixture_path("tests/fixtures/valid_stm32_single_segment.hex");
+    let log = NamedTempFile::new().expect("temp log");
+    let log_path = log.path().to_path_buf();
+
+    let (code, _stdout, stderr) = run_cli_capture(&[
+        "--mock",
+        "batch",
+        hex_file.to_str().unwrap(),
+        "--target",
+        "STM32F401RE",
+        "--count",
+        "2",
+        "--rearm",
+        "immediate",
+        "--log",
+        log_path.to_str().unwrap(),
+    ]);
+
+    assert_eq!(code, EXIT_SUCCESS, "stderr: {}", stderr);
+    let csv = std::fs::read_to_string(&log_path).expect("log written");
+    let lines: Vec<&str> = csv.lines().collect();
+    assert_eq!(lines.len(), 3, "header plus two units, got: {}", csv);
+    assert!(lines[0].starts_with("index,status,probe_serial,target"));
+    assert!(lines[1].starts_with("1,passed,"));
+    assert!(lines[2].starts_with("2,passed,"));
+}
+
+#[test]
+fn test_batch_json_stream_and_unsupported_target() {
+    let _guard = lock_mock_flash();
+    let hex_file = fixture_path("tests/fixtures/valid_stm32_single_segment.hex");
+    let (code, stdout, _stderr) = run_cli_capture(&[
+        "--mock",
+        "--json",
+        "batch",
+        hex_file.to_str().unwrap(),
+        "--target",
+        "STM32F401RE",
+        "--count",
+        "1",
+        "--rearm",
+        "immediate",
+    ]);
+    assert_eq!(code, EXIT_SUCCESS);
+    assert!(
+        stdout.contains("\"type\":\"batch_unit_finished\""),
+        "stdout: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("\"type\":\"batch_complete\""),
+        "stdout: {}",
+        stdout
+    );
+
+    // An unsupported target is rejected before any board is programmed.
+    let (code, _stdout, _stderr) = run_cli_capture(&[
+        "--mock",
+        "batch",
+        hex_file.to_str().unwrap(),
+        "--target",
+        "NOT_A_REAL_MCU",
+        "--count",
+        "1",
+        "--rearm",
+        "immediate",
+    ]);
+    assert_eq!(code, EXIT_TARGET_CONNECTION_ERROR);
+}

@@ -40,6 +40,9 @@ pub enum Commands {
     /// Program firmware onto target microcontroller
     Flash(FlashArgs),
 
+    /// Program the same firmware onto a series of boards (production mode)
+    Batch(BatchArgs),
+
     /// Erase target MCU flash memory
     Erase(EraseArgs),
 
@@ -138,6 +141,63 @@ pub struct FlashArgs {
     /// Load options from named profile
     #[arg(long)]
     pub profile: Option<String>,
+}
+
+/// How the runner waits for the next board between units.
+#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Rearm {
+    /// Wait for the programmed board to be unplugged, then for the next one
+    Detach,
+    /// Program again as soon as the previous unit finishes
+    Immediate,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct BatchArgs {
+    /// Connection, firmware, and option flags, identical to `flash`
+    #[command(flatten)]
+    pub flash: FlashArgs,
+
+    /// Stop after this many boards; omit to run until interrupted
+    #[arg(short = 'n', long)]
+    pub count: Option<u32>,
+
+    /// End the batch on the first failing board instead of continuing
+    #[arg(long)]
+    pub stop_on_error: bool,
+
+    /// Pause this long after each board
+    #[arg(long, default_value_t = 0)]
+    pub delay_ms: u64,
+
+    /// How the next board is detected
+    #[arg(long, value_enum, default_value_t = Rearm::Detach)]
+    pub rearm: Rearm,
+
+    /// Write the production log here (CSV unless --log-json)
+    #[arg(long)]
+    pub log: Option<String>,
+
+    /// Write the production log as JSON instead of CSV
+    #[arg(long)]
+    pub log_json: bool,
+
+    /// Also print the per-board flash telemetry, not just one line per board
+    #[arg(long)]
+    pub unit_progress: bool,
+
+    /// Give up waiting for a board to be unplugged after this long
+    #[arg(long, default_value_t = 300_000)]
+    pub detach_timeout_ms: u64,
+
+    /// Give up waiting for the next board after this long
+    #[arg(long, default_value_t = 300_000)]
+    pub attach_timeout_ms: u64,
+
+    /// How often to re-check while waiting for a board
+    #[arg(long, default_value_t = 250)]
+    pub poll_interval_ms: u64,
 }
 
 #[derive(Args, Debug, Clone)]

@@ -1,3 +1,4 @@
+pub mod batch;
 pub mod devices;
 pub mod erase;
 pub mod flash;
@@ -9,6 +10,8 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use crate::cli::{parse_address, Cli, FlashArgs, Protocol};
+use crate::exit_codes::CliError;
 use flash_core::error::FlashError;
 use flash_core::mock::{FaultInjector, MockFlashMemory, MockFlashSession};
 use flash_core::traits::{FlashBackend, FlashSession};
@@ -17,6 +20,126 @@ use flash_core::MockProbeBackend;
 
 #[cfg(feature = "live-probe")]
 use flash_core::ProbeRsLiveBackend;
+
+/// Flash parameters after the CLI-over-profile-over-default hierarchy has been
+/// applied. `flash` and `batch` accept the same flags, so they resolve them the
+/// same way.
+#[derive(Debug, Clone)]
+pub struct ResolvedFlash {
+    pub file_path: String,
+    pub target: String,
+    pub probe: Option<String>,
+    pub interface: Protocol,
+    pub speed: u32,
+    pub base_address: Option<u32>,
+    pub verify: bool,
+    pub reset: bool,
+    pub full_erase: bool,
+}
+
+/// Resolves firmware, connection, and option values from explicit flags, the
+/// named profile, and the built-in defaults, in that order of precedence.
+pub fn resolve_flash_params(cli: &Cli, args: &FlashArgs) -> Result<ResolvedFlash, CliError> {
+    let profile = if let Some(ref prof_name) = args.profile {
+        let custom_file = cli.profile_file.as_deref().map(std::path::Path::new);
+        Some(flash_core::profile::load_profile(prof_name, custom_file)?)
+    } else {
+        None
+    };
+
+    let file_path = args
+        .file
+        .clone()
+        .or_else(|| {
+            profile
+                .as_ref()
+                .and_then(|p| p.default_path().map(ToString::to_string))
+        })
+        .ok_or_else(|| {
+            CliError::InvalidArgsOrProfile(
+                "No firmware file specified. Provide a file path or specify a profile with default_path."
+                    .to_string(),
+            )
+        })?;
+
+    let target = args
+        .target
+        .clone()
+        .or_else(|| profile.as_ref().map(|p| p.target().to_string()))
+        .unwrap_or_else(|| "auto".to_string());
+
+    if !is_supported_target(&target, cli.mock) {
+        return Err(CliError::TargetConnection(format!(
+            "Target MCU '{}' is not supported by probe backend",
+            target
+        )));
+    }
+
+    let probe = args.probe.clone().or_else(|| {
+        profile
+            .as_ref()
+            .and_then(|p| p.probe_id().map(ToString::to_string))
+    });
+
+    let interface = args
+        .interface
+        .or_else(|| {
+            profile
+                .as_ref()
+                .and_then(|p| match p.interface().to_lowercase().as_str() {
+                    "swd" => Some(Protocol::Swd),
+                    "jtag" => Some(Protocol::Jtag),
+                    _ => None,
+                })
+        })
+        .unwrap_or(Protocol::Swd);
+
+    let speed = args
+        .speed
+        .or_else(|| profile.as_ref().map(|p| p.speed_khz()))
+        .unwrap_or(2000);
+
+    let base_address_str = args.base_address.clone().or_else(|| {
+        profile
+            .as_ref()
+            .and_then(|p| p.base_address().map(ToString::to_string))
+    });
+    let base_address = match base_address_str {
+        Some(ref addr_s) => Some(parse_address(addr_s)?),
+        None => None,
+    };
+
+    let verify = if args.no_verify {
+        false
+    } else {
+        args.verify
+            .or_else(|| profile.as_ref().map(|p| p.verify_after()))
+            .unwrap_or(true)
+    };
+
+    let reset = if args.no_reset {
+        false
+    } else {
+        args.reset
+            .or_else(|| profile.as_ref().map(|p| p.reset_after()))
+            .unwrap_or(true)
+    };
+
+    let full_erase =
+        args.full_erase || profile.as_ref().map(|p| p.full_chip_erase()).unwrap_or(false);
+
+    Ok(ResolvedFlash {
+        file_path,
+        target,
+        probe,
+        interface,
+        speed,
+        base_address,
+        verify,
+        reset,
+        full_erase,
+    })
+}
 
 /// Returns the appropriate probe backend based on the `--mock` CLI flag.
 pub fn get_backend(mock: bool) -> Box<dyn FlashBackend> {

@@ -1,3 +1,4 @@
+pub mod batch;
 pub mod error;
 pub mod manager;
 pub mod profile;
@@ -13,6 +14,10 @@ pub mod live;
 
 pub mod unified;
 
+pub use batch::{
+    run_batch, run_batch_with, BatchConfig, BatchEvent, BatchObserver, BatchReport,
+    RearmPolicy, StopReason, UnitRecord, UnitStatus,
+};
 pub use error::FlashError;
 pub use manager::FlashManager;
 pub use progress::{
