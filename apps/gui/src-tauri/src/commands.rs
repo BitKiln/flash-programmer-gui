@@ -404,6 +404,24 @@ pub async fn list_probes(state: State<'_, AppState>) -> Result<Vec<ProbeInfoDto>
     .await
 }
 
+/// Baud used when the frontend does not name one.
+const DEFAULT_SERIAL_BAUD: u32 = 460_800;
+
+/// Derives the transport from the probe identifier.
+///
+/// The scheme already says what kind of thing is on the other end, so the
+/// frontend does not have to send a separate "kind" field that could disagree
+/// with the identifier it sends alongside it.
+fn transport_for(probe_id: Option<&str>, baud: Option<u32>) -> Transport {
+    match probe_id {
+        Some(id) if id.starts_with("esp:") => Transport::Serial {
+            baud: baud.unwrap_or(DEFAULT_SERIAL_BAUD),
+            controls_reset: true,
+        },
+        _ => Transport::DebugProbe,
+    }
+}
+
 #[tauri::command]
 pub async fn connect_probe(
     state: State<'_, AppState>,
@@ -411,11 +429,13 @@ pub async fn connect_probe(
     target: String,
     protocol: String,
     speed: u32,
+    baud: Option<u32>,
 ) -> Result<TargetInfoDto, String> {
     let state = (*state).clone();
     in_background(move || {
         close_active_session(&state)?;
 
+        let transport = transport_for(probe_id.as_deref(), baud);
         let config = ConnectionConfig {
             probe_id,
             target_name: target,
@@ -423,7 +443,7 @@ pub async fn connect_probe(
             speed_khz: speed,
             connect_under_reset: false,
             reset_type: None,
-            transport: Transport::DebugProbe,
+            transport,
         };
 
         let session = {
@@ -449,11 +469,13 @@ pub async fn auto_detect_target(
     probe_id: Option<String>,
     protocol: String,
     speed: u32,
+    baud: Option<u32>,
 ) -> Result<TargetInfoDto, String> {
     let state = (*state).clone();
     in_background(move || {
         close_active_session(&state)?;
 
+        let probe_id_for_transport = probe_id.clone();
         let config = ConnectionConfig {
             probe_id,
             target_name: "auto".to_string(),
@@ -461,7 +483,7 @@ pub async fn auto_detect_target(
             speed_khz: speed,
             connect_under_reset: false,
             reset_type: None,
-            transport: Transport::DebugProbe,
+            transport: transport_for(probe_id_for_transport.as_deref(), baud),
         };
 
         let session = {
@@ -776,6 +798,7 @@ pub async fn start_batch(
     target: String,
     protocol: String,
     speed: u32,
+    baud: Option<u32>,
     verify: bool,
     reset: bool,
     chip_erase: bool,
@@ -800,6 +823,7 @@ pub async fn start_batch(
         // session left open would hold the probe against it.
         close_active_session(&state)?;
 
+        let batch_transport = transport_for(probe_id.as_deref(), baud);
         let config = BatchConfig {
             connection: ConnectionConfig {
                 probe_id,
@@ -808,7 +832,7 @@ pub async fn start_batch(
                 speed_khz: speed,
                 connect_under_reset: false,
                 reset_type: None,
-                transport: Transport::DebugProbe,
+                transport: batch_transport,
             },
             options: ProgramOptions {
                 verify_after: verify,

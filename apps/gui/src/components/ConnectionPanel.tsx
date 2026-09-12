@@ -40,7 +40,7 @@ export function ConnectionPanel() {
     saveProfile,
   } = useFlashProgrammer();
 
-  const [mode, setMode] = useState<"hardware" | "simulator">("hardware");
+  const [mode, setMode] = useState<"hardware" | "serial" | "simulator">("hardware");
   // Empty means "identify the chip on connect". Never guess a part number:
   // a wrong one attaches happily and only misbehaves when erasing or writing.
   const [target, setTarget] = useState("");
@@ -48,6 +48,9 @@ export function ConnectionPanel() {
   const [recentTargets, setRecentTargets] = useState<string[]>(loadRecentTargets);
   const [protocol, setProtocol] = useState("Swd");
   const [speed, setSpeed] = useState(4000);
+  // Serial bootloader rate. Only meaningful in "serial" mode; 460800 is what
+  // esptool and ESP-IDF default to.
+  const [baud, setBaud] = useState(460800);
   const [isDetecting, setIsDetecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
@@ -119,7 +122,8 @@ export function ConnectionPanel() {
       const { info, error: detectError } = await autoDetectTarget(
         state.selectedProbe,
         protocol,
-        speed
+        speed,
+        isSerial ? baud : undefined
       );
       // info.name is always a registry chip name, so Connect can reuse it as-is.
       if (info) {
@@ -132,14 +136,33 @@ export function ConnectionPanel() {
     }
   };
 
+  // Three kinds of thing can be on the other end now, and the identifier's
+  // scheme is what says which: "mock:" a simulation, "esp:" a serial
+  // bootloader, anything else a debug probe.
   const hardwareProbes = state.probes.filter(
-    (p) => !p.identifier.startsWith("mock:") && p.probe_type !== "VirtualMock"
+    (p) =>
+      !p.identifier.startsWith("mock:") &&
+      !p.identifier.startsWith("esp:") &&
+      p.probe_type !== "VirtualMock"
+  );
+  const serialProbes = state.probes.filter((p) =>
+    p.identifier.startsWith("esp:")
   );
   const simulatorProbes = state.probes.filter(
     (p) => p.identifier.startsWith("mock:") || p.probe_type === "VirtualMock"
   );
 
-  const displayedProbes = mode === "hardware" ? hardwareProbes : simulatorProbes;
+  const displayedProbes =
+    mode === "hardware"
+      ? hardwareProbes
+      : mode === "serial"
+        ? serialProbes
+        : simulatorProbes;
+
+  // A serial bootloader has no wire protocol and no debug clock; it has a baud
+  // rate. Showing SWD/JTAG and a kHz field for one would be a lie about what is
+  // being configured.
+  const isSerial = mode === "serial";
 
   // Auto-select first probe when switching modes or when probes update
   useEffect(() => {
@@ -153,14 +176,24 @@ export function ConnectionPanel() {
           probeId: displayedProbes[0].identifier,
         });
       }
-    } else if (mode === "hardware") {
+    } else if (mode === "hardware" && state.selectedProbe !== null) {
+      // Only when it actually changes. `displayedProbes` is rebuilt every
+      // render, so an unconditional dispatch here re-renders, re-runs this
+      // effect, and spins forever -- which is what happens with no probe
+      // attached.
       dispatch({ type: "SELECT_PROBE", probeId: null });
     }
   }, [mode, displayedProbes, state.selectedProbe, dispatch]);
 
   const handleConnect = async () => {
     setError(null);
-    const failure = await connectProbe(state.selectedProbe, target, protocol, speed);
+    const failure = await connectProbe(
+      state.selectedProbe,
+      target,
+      protocol,
+      speed,
+      isSerial ? baud : undefined
+    );
     setError(failure);
     if (!failure && target.trim()) {
       rememberTarget(target.trim());
@@ -220,8 +253,8 @@ export function ConnectionPanel() {
         </div>
       </div>
 
-      {/* Mode Switcher: Hardware vs Simulator */}
-      <div className="grid grid-cols-2 gap-1 p-1 bg-bg-primary rounded border border-gray-700">
+      {/* Mode Switcher: what is on the other end */}
+      <div className="grid grid-cols-3 gap-1 p-1 bg-bg-primary rounded border border-gray-700">
         <button
           type="button"
           onClick={() => setMode("hardware")}
@@ -230,8 +263,21 @@ export function ConnectionPanel() {
               ? "bg-accent-red text-white shadow-sm"
               : "text-gray-400 hover:text-gray-200"
           }`}
+          title="ST-Link, CMSIS-DAP or J-Link over SWD/JTAG"
         >
-          ⚡ Hardware Probe
+          ⚡ Probe
+        </button>
+        <button
+          type="button"
+          onClick={() => setMode("serial")}
+          className={`py-1 text-xs font-semibold rounded transition-colors ${
+            mode === "serial"
+              ? "bg-sky-600 text-white shadow-sm"
+              : "text-gray-400 hover:text-gray-200"
+          }`}
+          title="ESP32 over the serial/USB ROM bootloader, with no debug probe"
+        >
+          🔌 ESP Serial
         </button>
         <button
           type="button"
@@ -241,11 +287,11 @@ export function ConnectionPanel() {
               ? "bg-amber-600 text-white shadow-sm"
               : "text-gray-400 hover:text-gray-200"
           }`}
+          title="A simulated target, for trying the tool with no board"
         >
-          🧪 Virtual Simulator
+          🧪 Simulator
         </button>
       </div>
-
       {/* Probe Selection */}
       <div>
         <label className="block text-xs text-gray-400 mb-1">
@@ -278,11 +324,28 @@ export function ConnectionPanel() {
           <button
             onClick={refreshProbes}
             className="shrink-0 px-2.5 py-1.5 bg-bg-tertiary border border-gray-600 rounded text-sm text-gray-300 hover:bg-gray-600 transition-colors"
-            title="Scan for connected debug probes"
+            title="Scan for connected probes and serial ports"
           >
             ⟳
           </button>
         </div>
+
+        {mode === "serial" && displayedProbes.length === 0 && (
+          <div className="mt-2.5 p-2.5 bg-bg-primary border border-sky-900/60 rounded text-xs space-y-1.5">
+            <div className="flex items-center gap-1.5 text-sky-400 font-medium">
+              <span>⚠</span> No serial port detected
+            </div>
+            <p className="text-gray-300">
+              Connect an ESP board over USB and click <strong>⟳</strong>. The board must
+              be in <strong>download mode</strong>: hold <strong>BOOT</strong> while tapping
+              <strong> RESET</strong> if it does not enter it by itself.
+            </p>
+            <p className="text-gray-400">
+              On Linux you also need to be in the group that owns the port, usually
+              <code> dialout</code>.
+            </p>
+          </div>
+        )}
 
         {mode === "hardware" && displayedProbes.length === 0 && (
           <div className="mt-2.5 p-2.5 bg-bg-primary border border-amber-900/60 rounded text-xs space-y-1.5">
@@ -322,7 +385,11 @@ export function ConnectionPanel() {
             onClick={handleAutoDetect}
             disabled={isDetecting || !state.selectedProbe}
             className="text-xs text-accent-red hover:underline flex items-center gap-1 font-medium disabled:opacity-50 disabled:hover:no-underline transition-colors"
-            title="Auto-detect connected MCU chip via SWD/JTAG IDCODE"
+            title={
+              isSerial
+                ? "Ask the ESP bootloader which chip it is running on"
+                : "Auto-detect connected MCU chip via SWD/JTAG IDCODE"
+            }
           >
             {isDetecting ? "Detecting..." : "🔍 Auto-Detect"}
           </button>
@@ -364,50 +431,75 @@ export function ConnectionPanel() {
         )}
       </div>
 
-      {/* Protocol */}
-      <div>
-        <label className="block text-xs text-gray-400 mb-1">Interface</label>
-        <div className="flex gap-4">
-          <label className="flex items-center gap-1.5 text-sm text-gray-300 cursor-pointer">
-            <input
-              type="radio"
-              name="protocol"
-              value="Swd"
-              checked={protocol === "Swd"}
-              onChange={(e) => setProtocol(e.target.value)}
-              className="accent-accent-red"
-            />
-            SWD
-          </label>
-          <label className="flex items-center gap-1.5 text-sm text-gray-300 cursor-pointer">
-            <input
-              type="radio"
-              name="protocol"
-              value="Jtag"
-              checked={protocol === "Jtag"}
-              onChange={(e) => setProtocol(e.target.value)}
-              className="accent-accent-red"
-            />
-            JTAG
-          </label>
+      {/* What the wire actually is. A serial bootloader has no wire
+          protocol and no debug clock, so those controls are replaced rather
+          than left on screen configuring nothing. */}
+      {isSerial ? (
+        <div>
+          <label className="block text-xs text-gray-400 mb-1">Baud rate</label>
+          <select
+            className="w-full bg-bg-primary border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-accent-red focus:outline-none"
+            value={baud}
+            onChange={(e) => setBaud(Number(e.target.value))}
+          >
+            <option value={115200}>115200 (slowest, most reliable)</option>
+            <option value={230400}>230400</option>
+            <option value={460800}>460800 (default)</option>
+            <option value={921600}>921600 (fastest, needs a good bridge)</option>
+          </select>
+          <p className="text-xs text-gray-500 mt-1">
+            Flash is addressed by <strong>offset</strong> on an ESP part, not by the
+            memory-mapped address. A raw <code>.bin</code> application image usually
+            goes at <code>0x10000</code>.
+          </p>
         </div>
-      </div>
+      ) : (
+        <>
+          {/* Protocol */}
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Interface</label>
+            <div className="flex gap-4">
+              <label className="flex items-center gap-1.5 text-sm text-gray-300 cursor-pointer">
+                <input
+                  type="radio"
+                  name="protocol"
+                  value="Swd"
+                  checked={protocol === "Swd"}
+                  onChange={(e) => setProtocol(e.target.value)}
+                  className="accent-accent-red"
+                />
+                SWD
+              </label>
+              <label className="flex items-center gap-1.5 text-sm text-gray-300 cursor-pointer">
+                <input
+                  type="radio"
+                  name="protocol"
+                  value="Jtag"
+                  checked={protocol === "Jtag"}
+                  onChange={(e) => setProtocol(e.target.value)}
+                  className="accent-accent-red"
+                />
+                JTAG
+              </label>
+            </div>
+          </div>
 
-      {/* Speed */}
-      <div>
-        <label className="block text-xs text-gray-400 mb-1">Speed (kHz)</label>
-        <select
-          className="w-full bg-bg-primary border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-accent-red focus:outline-none"
-          value={speed}
-          onChange={(e) => setSpeed(Number(e.target.value))}
-        >
-          <option value={1000}>1000 kHz</option>
-          <option value={2000}>2000 kHz</option>
-          <option value={4000}>4000 kHz</option>
-          <option value={8000}>8000 kHz</option>
-        </select>
-      </div>
-
+          {/* Speed */}
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Speed (kHz)</label>
+            <select
+              className="w-full bg-bg-primary border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-accent-red focus:outline-none"
+              value={speed}
+              onChange={(e) => setSpeed(Number(e.target.value))}
+            >
+              <option value={1000}>1000 kHz</option>
+              <option value={2000}>2000 kHz</option>
+              <option value={4000}>4000 kHz</option>
+              <option value={8000}>8000 kHz</option>
+            </select>
+          </div>
+        </>
+      )}
       {/* One button, two states: connecting holds the probe, disconnecting
           releases it for other tools. */}
       <button

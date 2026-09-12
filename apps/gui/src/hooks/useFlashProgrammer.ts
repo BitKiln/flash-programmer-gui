@@ -144,10 +144,17 @@ export function useFlashProgrammer() {
       probeId: string | null,
       target: string,
       protocol: string,
-      speed: number
+      speed: number,
+      /// Serial bootloader rate. Undefined for a debug probe, which has none.
+      baud?: number
     ): Promise<string | null> => {
       dispatch({ type: "SET_CONNECTION_STATUS", status: "connecting" });
-      addLog("info", `Connecting to ${target} via ${protocol}...`);
+      addLog(
+        "info",
+        baud === undefined
+          ? `Connecting to ${target} via ${protocol}...`
+          : `Connecting to ${target} over the serial bootloader at ${baud} baud...`
+      );
 
       try {
         const info = await invoke<TargetInfo>("connect_probe", {
@@ -155,6 +162,7 @@ export function useFlashProgrammer() {
           target,
           protocol,
           speed,
+          baud,
         });
         dispatch({ type: "SET_TARGET_INFO", info });
         dispatch({ type: "SET_CONNECTION_STATUS", status: "connected" });
@@ -191,16 +199,23 @@ export function useFlashProgrammer() {
     async (
       probeId: string | null,
       protocol: string,
-      speed: number
+      speed: number,
+      baud?: number
     ): Promise<{ info: TargetInfo | null; error: string | null }> => {
       dispatch({ type: "SET_CONNECTION_STATUS", status: "connecting" });
-      addLog("info", `Auto-detecting connected MCU board via ${protocol}...`);
+      addLog(
+        "info",
+        baud === undefined
+          ? `Auto-detecting connected MCU board via ${protocol}...`
+          : "Asking the ESP bootloader which chip it is running on..."
+      );
 
       try {
         const info = await invoke<TargetInfo>("auto_detect_target", {
           probeId,
           protocol,
           speed,
+          baud,
         });
         dispatch({ type: "SET_TARGET_INFO", info });
         dispatch({ type: "SET_CONNECTION_STATUS", status: "connected" });
