@@ -719,10 +719,16 @@ fn test_serial_outside_flash_is_rejected() {
 
 #[test]
 fn a_memory_write_is_visible_to_a_later_read() {
+    // Its own probe id, so its RAM and flash backing files are its own: this
+    // test carries state from one invocation to the next, and a test elsewhere
+    // in the file that persists a fresh mock session would otherwise overwrite
+    // it.
     let _guard = lock_mock_flash();
     let (code, stdout, stderr) = run_cli_capture(&[
         "--mock",
         "memory",
+        "--probe",
+        "mock:memread",
         "--target",
         "STM32F401RE",
         "write",
@@ -737,6 +743,8 @@ fn a_memory_write_is_visible_to_a_later_read() {
     let (code, stdout, stderr) = run_cli_capture(&[
         "--mock",
         "memory",
+        "--probe",
+        "mock:memread",
         "--target",
         "STM32F401RE",
         "read",
@@ -803,6 +811,8 @@ fn memory_bytes_can_come_from_a_file_and_go_back_to_one() {
     let (code, _stdout, stderr) = run_cli_capture(&[
         "--mock",
         "memory",
+        "--probe",
+        "mock:memfile",
         "--target",
         "STM32F401RE",
         "write",
@@ -818,6 +828,8 @@ fn memory_bytes_can_come_from_a_file_and_go_back_to_one() {
     let (code, _stdout, stderr) = run_cli_capture(&[
         "--mock",
         "memory",
+        "--probe",
+        "mock:memfile",
         "--target",
         "STM32F401RE",
         "read",

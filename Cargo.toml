@@ -7,6 +7,7 @@ members = [
     "crates/backends/mock",
     "crates/backends/probe-rs",
     "crates/backends/esp-serial",
+    "crates/backends/openocd",
     "crates/flash-backends",
     "crates/flashgui-cli",
     "crates/e2e-tests",

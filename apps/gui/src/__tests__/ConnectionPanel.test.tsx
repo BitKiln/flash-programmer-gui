@@ -134,4 +134,50 @@ describe("ConnectionPanel transports", () => {
       expect.objectContaining({ baud: undefined })
     );
   });
+
+  it("asks for an address in OpenOCD mode rather than a choice from a list", async () => {
+    await renderPanel();
+    await switchTo(/OpenOCD/);
+
+    // Nothing can enumerate OpenOCD processes, and a socket that answers is
+    // not proof an adapter is attached, so the endpoint is typed.
+    const field = screen.getByLabelText(/OpenOCD TCL endpoint/i) as HTMLInputElement;
+    expect(field.value).toBe("127.0.0.1:6666");
+    expect(screen.getByText("OPENOCD")).toBeTruthy();
+  });
+
+  it("offers no wire protocol, clock or baud rate for OpenOCD", async () => {
+    await renderPanel();
+    await switchTo(/OpenOCD/);
+
+    // OpenOCD's own configuration chose the adapter, the wire and the clock
+    // before it started listening; offering them here would imply a control
+    // this program does not have.
+    expect(screen.queryByRole("radio", { name: "SWD" })).toBeNull();
+    expect(screen.queryByText("Speed (kHz)")).toBeNull();
+    expect(screen.queryByText("Baud rate")).toBeNull();
+  });
+
+  it("turns the endpoint into an openocd identifier", async () => {
+    await renderPanel();
+    await switchTo(/OpenOCD/);
+
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText(/OpenOCD TCL endpoint/i), {
+        target: { value: "buildbox:4444" },
+      });
+    });
+
+    // The scheme is what routes the request to this backend.
+    expect(await screen.findByText(/openocd:buildbox:4444/)).toBeTruthy();
+  });
+
+  it("says that programming needs a local OpenOCD", async () => {
+    await renderPanel();
+    await switchTo(/OpenOCD/);
+
+    // The interlock exists in the backend; saying so where the address is
+    // typed is what stops someone discovering it mid-flash.
+    expect(screen.getByText(/opens the image file itself/)).toBeTruthy();
+  });
 });

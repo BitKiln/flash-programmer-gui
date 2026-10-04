@@ -1,6 +1,6 @@
-use std::fmt;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 use crate::exit_codes::CliError;
 
@@ -141,6 +141,14 @@ pub struct FlashArgs {
     /// Baud rate for a serial bootloader connection (default 460800).
     #[arg(long)]
     pub baud: Option<u32>,
+
+    /// Endpoint of a running OpenOCD's TCL port (e.g. localhost:6666, or
+    /// just 6666).
+    ///
+    /// Shorthand for `--probe openocd:<endpoint>`. OpenOCD's own
+    /// configuration decides the adapter and the wire.
+    #[arg(long, conflicts_with_all = ["probe", "port"])]
+    pub openocd: Option<String>,
 
     /// Base address for raw binary files (e.g. 0x08000000)
     #[arg(short = 'a', long)]
@@ -301,6 +309,14 @@ pub struct EraseArgs {
     #[arg(long)]
     pub baud: Option<u32>,
 
+    /// Endpoint of a running OpenOCD's TCL port (e.g. localhost:6666, or
+    /// just 6666).
+    ///
+    /// Shorthand for `--probe openocd:<endpoint>`. OpenOCD's own
+    /// configuration decides the adapter and the wire.
+    #[arg(long, conflicts_with_all = ["probe", "port"])]
+    pub openocd: Option<String>,
+
     /// Clock frequency in kHz
     #[arg(short, long, default_value_t = 2000)]
     pub speed: u32,
@@ -363,6 +379,14 @@ pub struct MemoryArgs {
     /// Baud rate for a serial bootloader connection (default 460800).
     #[arg(long)]
     pub baud: Option<u32>,
+
+    /// Endpoint of a running OpenOCD's TCL port (e.g. localhost:6666, or
+    /// just 6666).
+    ///
+    /// Shorthand for `--probe openocd:<endpoint>`. OpenOCD's own
+    /// configuration decides the adapter and the wire.
+    #[arg(long, conflicts_with_all = ["probe", "port"])]
+    pub openocd: Option<String>,
 
     /// Clock frequency in kHz
     #[arg(short, long, default_value_t = 2000)]
@@ -429,6 +453,14 @@ pub struct VerifyArgs {
     #[arg(long)]
     pub baud: Option<u32>,
 
+    /// Endpoint of a running OpenOCD's TCL port (e.g. localhost:6666, or
+    /// just 6666).
+    ///
+    /// Shorthand for `--probe openocd:<endpoint>`. OpenOCD's own
+    /// configuration decides the adapter and the wire.
+    #[arg(long, conflicts_with_all = ["probe", "port"])]
+    pub openocd: Option<String>,
+
     /// Clock frequency in kHz
     #[arg(short, long, default_value_t = 2000)]
     pub speed: u32,
@@ -461,6 +493,14 @@ pub struct ResetArgs {
     /// Baud rate for a serial bootloader connection (default 460800).
     #[arg(long)]
     pub baud: Option<u32>,
+
+    /// Endpoint of a running OpenOCD's TCL port (e.g. localhost:6666, or
+    /// just 6666).
+    ///
+    /// Shorthand for `--probe openocd:<endpoint>`. OpenOCD's own
+    /// configuration decides the adapter and the wire.
+    #[arg(long, conflicts_with_all = ["probe", "port"])]
+    pub openocd: Option<String>,
 
     /// Clock frequency in kHz
     #[arg(short, long, default_value_t = 2000)]
@@ -542,19 +582,16 @@ pub enum ProfileSubcommand {
 /// Parses an address string which can be hex (e.g. "0x08000000") or decimal.
 pub fn parse_address(addr_str: &str) -> Result<u32, CliError> {
     let clean = addr_str.trim();
-    if let Some(hex) = clean.strip_prefix("0x").or_else(|| clean.strip_prefix("0X")) {
+    if let Some(hex) = clean
+        .strip_prefix("0x")
+        .or_else(|| clean.strip_prefix("0X"))
+    {
         u32::from_str_radix(hex, 16).map_err(|e| {
-            CliError::InvalidArgsOrProfile(format!(
-                "Invalid hex address '{}': {}",
-                addr_str, e
-            ))
+            CliError::InvalidArgsOrProfile(format!("Invalid hex address '{}': {}", addr_str, e))
         })
     } else {
         clean.parse::<u32>().map_err(|e| {
-            CliError::InvalidArgsOrProfile(format!(
-                "Invalid address '{}': {}",
-                addr_str, e
-            ))
+            CliError::InvalidArgsOrProfile(format!("Invalid address '{}': {}", addr_str, e))
         })
     }
 }

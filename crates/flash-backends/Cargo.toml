@@ -11,9 +11,11 @@ flash-core = { path = "../flash-core" }
 flash-backend-mock = { path = "../backends/mock", optional = true }
 flash-backend-probe-rs = { path = "../backends/probe-rs", optional = true }
 flash-backend-esp-serial = { path = "../backends/esp-serial", optional = true }
+flash-backend-openocd = { path = "../backends/openocd", optional = true }
 
 [features]
-default = ["mock-probe", "live-probe", "esp-serial"]
+default = ["mock-probe", "live-probe", "esp-serial", "openocd"]
 mock-probe = ["dep:flash-backend-mock"]
 live-probe = ["dep:flash-backend-probe-rs"]
 esp-serial = ["dep:flash-backend-esp-serial"]
+openocd = ["dep:flash-backend-openocd"]

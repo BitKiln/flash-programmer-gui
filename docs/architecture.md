@@ -42,6 +42,7 @@ either application knowing.
 | `backends/probe-rs` | Arm targets through probe-rs | `flash-core`, `device-db`, `probe-rs` |
 | `backends/mock` | Simulated NOR flash with fault injection | `flash-core` |
 | `backends/esp-serial` | ESP32 over the serial/USB ROM bootloader | `flash-core`, `espflash` |
+| `backends/openocd` | Any target a running OpenOCD is configured for, over its TCL port | `flash-core` |
 | `flash-backends` | Aggregates the backends this build enables into a registry | `flash-core`, the backend crates |
 | `flashgui-cli` | The headless CLI | `flash-backends`, `flash-core`, `device-db` |
 | `apps/gui/src-tauri` | Tauri commands and app state | the same three |
